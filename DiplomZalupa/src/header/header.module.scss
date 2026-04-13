@@ -1,0 +1,96 @@
+*{
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+header{
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    width: 100%;
+    height: 70px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background-color: #ffffff;
+    box-shadow: rgba(0, 0, 0, 0.1);
+    nav{
+        width: 80%;
+        height: 100%;
+        justify-content: space-between;
+        display: flex;
+        
+        div{
+            display:flex;
+            align-items: center;
+            height: 100%;
+            width: 17vw;
+            justify-content: space-around;
+            img{
+                width: 48px;
+                height: 48px;
+                border-radius: 50%;
+            }
+            .LogoTextCont{
+                width: 13.5vw;
+                align-items: start;
+                justify-content: center;
+                height: 100px;
+                display:flex;
+                flex-direction: column;
+                h1{
+                    font-size: 1.2rem;
+                    font-weight: 600;
+                    color: #1f2937;
+                }
+                p{
+                    text-align: left;
+                    font-size: 0.8rem;
+                    color: #6b7280;
+                }      
+            }
+              
+        }
+        .LinkCont{
+            justify-content: space-between;
+            display: flex;
+            height: 100%;
+            width: 11vw;
+            align-items: center;
+            a{
+                display: flex;
+                text-align: center;
+                justify-content: center;
+                align-items: center;
+                transition: all 0.3s ease;
+                width: 60px;
+                height: 42px;
+                font-weight: bold;
+                text-decoration: none;
+                color: #1a73e8;
+                border-bottom: 1px solid transparent;
+            }
+            a:hover{
+                color: #1a73e8;
+                border-bottom: 1px solid #1a73e8;
+            }
+            button{
+                background: transparent;
+                transition: all 0.3s ease;
+                background-color:#ffffff;
+                border: none;
+                width: 60px;
+                height: 42px;
+                font-weight: bold;
+                text-decoration: none;
+                color: #1a73e8;
+                border-bottom: 1px solid transparent;
+                padding-top: 4px;
+                font-size: 15px;
+            }
+            button:hover{
+                color: #1a73e8;
+                border-bottom: 1px solid #1a73e8;
+            }
+        }
+    }
+}

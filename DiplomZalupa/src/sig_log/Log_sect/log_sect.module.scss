@@ -1,0 +1,150 @@
+.Login {
+    width: 100%;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+    main {
+        width: 100%;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+
+        > div {
+            background: #ffffff;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            width: 80%;
+            max-width: 500px;
+            height: 480px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+
+            > div {
+                width: 100%;
+                height: 50px;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                border-bottom: 1px solid #e5e7eb;
+
+                button {
+                    width: 50%;
+                    height: 100%;
+                    background: none;
+                    border: none;
+                    font-size: 1rem;
+                    font-weight: bold;
+                    cursor: pointer;
+
+                    &:first-child {
+                        color: #1a73e8;
+                        border-bottom: 1px solid #1a73e8;
+                    }
+
+                    &:last-child {
+                        color: #1a73e8;
+                        border-bottom: 1px solid transparent;
+                        transition: all 0.3s ease;
+
+                        &:hover {
+                            border-bottom: 1px solid #1a73e8;
+                        }
+                    }
+                }
+            }
+
+            form {
+                width: 100%;
+                height: 100%;
+                flex: 1;
+                display: flex;
+                flex-direction: column;
+                justify-content: space-around;
+                align-items: center;
+
+                h2 {
+                    width: 100%;
+                    text-align: center;
+                    font-size: 1.5rem;
+                    font-weight: 700;
+                    color: #1f2937;
+                }
+
+                > div {
+                    width: 80%;
+                    display: flex;
+                    flex-direction: column;
+                    justify-content: center;
+
+                    label {
+                        font-size: 0.9rem;
+                        color: #6b7280;
+                    }
+
+                    input {
+                        width: 100%;
+                        height: 40px;
+                        border: 1px solid #d1d5db;
+                        border-radius: 8px;
+                        font-size: 1rem;
+                        outline: none;
+                        padding-left: 5px;
+
+                        &:focus {
+                            border-color: #1a73e8;
+                        }
+                    }
+
+                    > div {
+                        width: 100%;
+                        height: 40px;
+                        display: flex;
+                        align-items: center;
+                        position: relative;
+
+                        input {
+                            width: 100%;
+                        }
+
+                        button {
+                            position: absolute;
+                            right: 10px;
+                            background: none;
+                            border: none;
+                            cursor: pointer;
+                            font-size: 1.2rem;
+                        }
+                    }
+                }
+
+                > button {
+                    width: 80%;
+                    height: 44px;
+                    background-color: #1a73e8;
+                    color: white;
+                    border: none;
+                    border-radius: 8px;
+                    font-size: 1rem;
+                    font-weight: 600;
+                    cursor: pointer;
+                    transition: background-color 0.2s;
+
+                    &:hover {
+                        background-color: #1557b0;
+                    }
+                }
+
+                > p {
+                    width: 100%;
+                    text-align: center;
+                    font-size: 0.9rem;
+                    height: 20px;
+                }
+            }
+        }
+    }
+}

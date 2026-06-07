@@ -1,0 +1,115 @@
+.DataInput {
+    height: 100%;
+}
+
+.Panel {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    padding: 24px;
+    border-radius: 12px;
+    background: #ffffff;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.Header {
+    h2 {
+        margin: 0;
+        font-size: 1.3rem;
+        color: #1f2937;
+    }
+}
+
+.FieldGrid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+}
+
+.Field {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+
+    span {
+        font-size: 0.86rem;
+        font-weight: 600;
+        color: #475569;
+    }
+
+    input {
+        width: 100%;
+        height: 42px;
+        padding: 0 14px;
+        border-radius: 8px;
+        border: 1px solid #d1d5db;
+        background: #ffffff;
+        color: #1f2937;
+        font-size: 0.95rem;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease;
+
+        &:focus {
+            outline: none;
+            border-color: #1a73e8;
+            box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.12);
+        }
+
+        &::placeholder {
+            color: #94a3b8;
+        }
+    }
+}
+
+.ButtonRow {
+    display: flex;
+    gap: 12px;
+
+    button {
+        flex: 1;
+        height: 42px;
+        border: none;
+        border-radius: 12px;
+        font-size: 1rem;
+        font-weight: 600;
+        cursor: pointer;
+        font-family: inherit;
+        transition: background-color 0.3s ease, opacity 0.2s ease;
+
+        &:disabled {
+            cursor: not-allowed;
+            opacity: 0.55;
+        }
+
+        &:first-child {
+            background-color: #1a73e8;
+            color: #ffffff;
+
+            &:not(:disabled):hover {
+                background-color: #1557b0;
+            }
+        }
+    }
+}
+
+.SecondaryButton {
+    background: #e5e7eb;
+    color: #1f2937;
+
+    &:not(:disabled):hover {
+        background: #d1d5db;
+    }
+}
+
+@media (max-width: 640px) {
+    .Panel {
+        padding: 22px;
+    }
+
+    .FieldGrid {
+        grid-template-columns: 1fr;
+    }
+
+    .ButtonRow {
+        flex-direction: column;
+    }
+}

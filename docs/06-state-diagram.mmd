@@ -1,0 +1,22 @@
+stateDiagram-v2
+    [*] --> Guest
+    Guest : Нет активного JWT-токена
+
+    Guest --> Registering: Открыта регистрация
+    Registering --> Authenticated: Регистрация успешна
+    Registering --> Guest: Ошибка валидации
+
+    Guest --> Authenticating: Отправлен логин и пароль
+    Authenticating --> Authenticated: JWT получен
+    Authenticating --> Guest: Неверные данные
+
+    Authenticated : Пользователь вошел
+    Authenticated --> EditingProfile: Редактирует профиль
+    EditingProfile --> Authenticated: Профиль сохранен
+    EditingProfile --> Authenticated: Изменения отклонены
+
+    Guest --> ResetRequested: Запрошен код восстановления
+    ResetRequested --> PasswordChanged: Код подтвержден
+    PasswordChanged --> Guest: Новый вход
+
+    Authenticated --> Guest: Выход или истечение токена

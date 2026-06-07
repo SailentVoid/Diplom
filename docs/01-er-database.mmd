@@ -1,0 +1,90 @@
+erDiagram
+    registration_data ||--o| personalization_data : "profile"
+    registration_data ||--o| admins : "admin account"
+    registration_data ||--o| balances : "balance"
+    registration_data ||--o{ debtors : "debts"
+    registration_data ||--o{ password_reset_codes : "reset codes"
+    audit_logs }o--o| registration_data : "user actor or entity"
+    audit_logs }o--o| admins : "admin actor"
+
+    registration_data {
+        BIGINT id PK
+        TEXT fio
+        TEXT login UK
+        TEXT street
+        TEXT password_hash
+        TIMESTAMPTZ created_at
+    }
+
+    personalization_data {
+        BIGINT id PK
+        BIGINT registration_id FK "UNIQUE"
+        TEXT full_name
+        DATE birth_date
+        TEXT phone
+        TEXT email
+        TEXT residential_address
+        TEXT registration_address
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
+    }
+
+    admins {
+        BIGINT id PK
+        BIGINT registration_id FK "UNIQUE"
+        TEXT login UK
+        TEXT password_hash
+        TEXT role
+        BOOLEAN is_active
+        TIMESTAMPTZ created_at
+    }
+
+    balances {
+        BIGINT id PK
+        BIGINT registration_id FK "UNIQUE"
+        NUMERIC amount
+        CHAR currency
+        TIMESTAMPTZ updated_at
+    }
+
+    debtors {
+        BIGINT id PK
+        BIGINT registration_id FK
+        NUMERIC debt_amount
+        TEXT reason
+        BOOLEAN is_active
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ closed_at
+    }
+
+    audit_logs {
+        BIGINT id PK
+        TEXT actor_type
+        BIGINT actor_id
+        TEXT actor_login
+        TEXT action
+        TEXT entity_table
+        BIGINT entity_id
+        JSONB changes
+        TEXT ip_address
+        TIMESTAMPTZ created_at
+    }
+
+    password_reset_codes {
+        BIGINT id PK
+        BIGINT registration_id FK
+        TEXT email
+        TEXT code_hash
+        INTEGER attempts
+        TIMESTAMPTZ expires_at
+        TIMESTAMPTZ used_at
+        TIMESTAMPTZ created_at
+    }
+
+    users {
+        INTEGER id PK
+        VARCHAR fio
+        VARCHAR login
+        VARCHAR street
+        VARCHAR password
+    }

@@ -1,0 +1,533 @@
+.AdminPage {
+    width: 100%;
+    min-height: 100vh;
+    padding: 32px 0 56px;
+}
+
+.AdminLoginPage {
+    padding: 24px 0 40px;
+}
+
+.Shell {
+    width: 100%;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 24px;
+}
+
+.Intro {
+    width: 80%;
+    max-width: 1200px;
+    min-height: 124px;
+    padding: 28px 32px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #1a73e8 0%, #4f8ef7 100%);
+    color: #ffffff;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 20px;
+
+    h1 {
+        margin: 0;
+        font-size: 2rem;
+        line-height: 1.2;
+    }
+
+    button {
+        height: 42px;
+        padding: 0 18px;
+        border: 1px solid rgba(255, 255, 255, 0.72);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.14);
+        color: #ffffff;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background-color 0.2s ease;
+
+        &:hover {
+            background: rgba(255, 255, 255, 0.24);
+        }
+    }
+}
+
+.Eyebrow {
+    margin: 0 0 8px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.LoginPanel,
+.Content,
+.Sidebar,
+.EditorPanel {
+    border-radius: 12px;
+    background: #ffffff;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.LoginPanel {
+    width: 80%;
+    max-width: 460px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 24px;
+
+    h2 {
+        margin: 0;
+        font-size: 1.3rem;
+        color: #1f2937;
+    }
+}
+
+.AdminLoginPage {
+    .Shell {
+        gap: 18px;
+    }
+
+    .Intro {
+        width: 64%;
+        max-width: 840px;
+        min-height: 96px;
+        padding: 22px 28px;
+        flex-direction: column;
+        align-items: flex-start;
+        justify-content: center;
+
+        h1 {
+            font-size: 1.55rem;
+        }
+    }
+
+    .Eyebrow {
+        margin-bottom: 6px;
+        font-size: 0.78rem;
+    }
+
+    .LoginPanel {
+        width: 360px;
+        max-width: calc(100% - 32px);
+        gap: 12px;
+        padding: 20px;
+
+        h2 {
+            font-size: 1.15rem;
+        }
+
+        input {
+            height: 38px;
+        }
+
+        button {
+            height: 40px;
+        }
+    }
+}
+
+.Workspace {
+    width: 80%;
+    max-width: 1200px;
+    display: grid;
+    grid-template-columns: 240px minmax(0, 1fr);
+    gap: 20px;
+    align-items: start;
+}
+
+.Sidebar {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+
+    button {
+        width: 100%;
+        min-height: 42px;
+        padding: 0 14px;
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        background: #ffffff;
+        color: #1f2937;
+        font: inherit;
+        font-weight: 600;
+        text-align: left;
+        cursor: pointer;
+        transition: border-color 0.2s ease, background-color 0.2s ease, color 0.2s ease;
+
+        &:hover {
+            border-color: #1a73e8;
+            color: #1a73e8;
+        }
+    }
+}
+
+.Sidebar .ActiveTable {
+    border-color: #1a73e8;
+    background: rgba(26, 115, 232, 0.08);
+    color: #1a73e8;
+}
+
+.Content {
+    min-width: 0;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.Toolbar,
+.EditorHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+
+    h2,
+    h3 {
+        margin: 0;
+        color: #1f2937;
+    }
+
+    p {
+        margin: 6px 0 0;
+        color: #64748b;
+        font-size: 0.92rem;
+    }
+}
+
+.Toolbar button,
+.EditorHeader button,
+.SaveButton,
+.LoginPanel button {
+    height: 42px;
+    border: none;
+    border-radius: 8px;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.Toolbar button,
+.SaveButton,
+.LoginPanel button {
+    padding: 0 18px;
+    background: #1a73e8;
+    color: #ffffff;
+
+    &:hover {
+        background: #1557b0;
+    }
+}
+
+.EditorHeader button {
+    padding: 0 14px;
+    background: #e5e7eb;
+    color: #1f2937;
+
+    &:hover {
+        background: #d1d5db;
+    }
+}
+
+.TableWrap {
+    width: 100%;
+    overflow-x: auto;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+}
+
+.TableWrap table {
+    width: 100%;
+    min-width: 760px;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+
+.TableWrap th,
+.TableWrap td {
+    padding: 12px 14px;
+    border-bottom: 1px solid #e5e7eb;
+    text-align: left;
+    vertical-align: top;
+    color: #1f2937;
+}
+
+.TableWrap th {
+    background: #f8fafc;
+    color: #475569;
+    font-weight: 700;
+}
+
+.TableWrap tr:last-child td {
+    border-bottom: none;
+}
+
+.TableWrap .DebtorRow td {
+    background: #fff7ed;
+}
+
+.DebtorBadge,
+.StatusBadge {
+    display: inline-flex;
+    min-height: 26px;
+    align-items: center;
+    padding: 0 10px;
+    border-radius: 999px;
+    font-size: 0.82rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.DebtorBadge {
+    background: #fee2e2;
+    color: #b91c1c;
+}
+
+.StatusBadge {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.NegativeAmount {
+    color: #b91c1c;
+}
+
+.ActionRow {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+
+    button {
+        height: 34px;
+        padding: 0 10px;
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        background: #ffffff;
+        color: #1a73e8;
+        font: inherit;
+        font-size: 0.86rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: border-color 0.2s ease, background-color 0.2s ease;
+
+        &:hover {
+            border-color: #1a73e8;
+            background: rgba(26, 115, 232, 0.08);
+        }
+    }
+}
+
+.EditorPanel {
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    box-shadow: none;
+    border: 1px solid #e5e7eb;
+}
+
+.FieldGrid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+}
+
+.Field {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+
+    span {
+        font-size: 0.86rem;
+        font-weight: 600;
+        color: #475569;
+    }
+}
+
+.LoginPanel input,
+.Field input {
+    width: 100%;
+    height: 42px;
+    padding: 0 14px;
+    border-radius: 8px;
+    border: 1px solid #d1d5db;
+    background: #ffffff;
+    color: #1f2937;
+    font-size: 0.95rem;
+    font-family: inherit;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+
+    &:focus {
+        outline: none;
+        border-color: #1a73e8;
+        box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.12);
+    }
+
+    &::placeholder {
+        color: #94a3b8;
+    }
+}
+
+.SaveButton {
+    align-self: flex-start;
+}
+
+.Message,
+.EmptyText {
+    margin: 0;
+    color: #64748b;
+    font-size: 0.95rem;
+}
+
+.EmptyText {
+    padding: 20px;
+}
+
+.LogList {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.LogCard {
+    padding: 16px;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    background: #ffffff;
+}
+
+.LogHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    margin-bottom: 12px;
+
+    h3 {
+        margin: 0;
+        color: #1f2937;
+        font-size: 1rem;
+    }
+
+    p,
+    time {
+        color: #64748b;
+        font-size: 0.88rem;
+    }
+
+    p {
+        margin: 4px 0 0;
+    }
+
+    time {
+        white-space: nowrap;
+    }
+}
+
+.ChangeList {
+    display: grid;
+    gap: 8px;
+}
+
+.ChangeItem {
+    display: grid;
+    grid-template-columns: 170px minmax(0, 1fr);
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: #f8fafc;
+
+    span {
+        color: #475569;
+        font-size: 0.86rem;
+        font-weight: 700;
+    }
+
+    p {
+        margin: 0;
+        color: #1f2937;
+        font-size: 0.9rem;
+        overflow-wrap: anywhere;
+    }
+}
+
+.LogMuted {
+    margin: 0;
+    color: #64748b;
+    font-size: 0.92rem;
+}
+
+.LogJson {
+    margin: 0;
+    max-height: 260px;
+    overflow: auto;
+    padding: 12px;
+    border-radius: 8px;
+    background: #f8fafc;
+    color: #1f2937;
+    font-size: 0.86rem;
+    white-space: pre-wrap;
+}
+
+@media (max-width: 960px) {
+    .AdminPage {
+        padding: 24px 0 40px;
+    }
+
+    .Intro,
+    .Workspace,
+    .LoginPanel {
+        width: calc(100% - 32px);
+    }
+
+    .Workspace {
+        grid-template-columns: 1fr;
+    }
+
+    .Sidebar {
+        flex-direction: row;
+        overflow-x: auto;
+
+        button {
+            min-width: 180px;
+        }
+    }
+}
+
+@media (max-width: 640px) {
+    .Intro {
+        flex-direction: column;
+        align-items: flex-start;
+
+        h1 {
+            font-size: 1.6rem;
+        }
+    }
+
+    .Toolbar,
+    .EditorHeader {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .FieldGrid {
+        grid-template-columns: 1fr;
+    }
+
+    .LogHeader,
+    .ChangeItem {
+        grid-template-columns: 1fr;
+    }
+
+    .LogHeader {
+        flex-direction: column;
+    }
+}

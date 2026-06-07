@@ -1,0 +1,24 @@
+flowchart TD
+    Start([Старт])
+    OpenForm[Открыть форму восстановления пароля]
+    EnterEmail[Ввести email]
+    SendRequest[Отправить запрос кода]
+    EmailFound{Email найден?}
+    GenerateCode[Сгенерировать шестизначный код]
+    SaveHash[Сохранить хеш кода и срок действия]
+    SendEmail[Отправить код на email или вывести в консоль]
+    EnterCode[Ввести email, код и новый пароль]
+    CodeValid{Код верный и не истек?}
+    HashPassword[Захешировать новый пароль]
+    UpdatePassword[Обновить registration_data.password_hash]
+    MarkUsed[Пометить код использованным]
+    WriteAudit[Записать событие в audit_logs]
+    Finish([Пароль обновлен])
+    Error([Показать ошибку])
+
+    Start --> OpenForm --> EnterEmail --> SendRequest --> EmailFound
+    EmailFound -- "да" --> GenerateCode --> SaveHash --> SendEmail --> EnterCode
+    EmailFound -- "нет" --> SendEmail
+    EnterCode --> CodeValid
+    CodeValid -- "да" --> HashPassword --> UpdatePassword --> MarkUsed --> WriteAudit --> Finish
+    CodeValid -- "нет" --> Error

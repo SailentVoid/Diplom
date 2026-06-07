@@ -1,0 +1,38 @@
+flowchart LR
+    subgraph Frontend["Frontend: FrontEnd"]
+        ReactApp["<<component>> React SPA"]
+        AuthPages["<<component>> Auth pages"]
+        UserPage["<<component>> User cabinet"]
+        AdminPage["<<component>> Admin panel"]
+    end
+
+    subgraph Backend["Backend: Node.js"]
+        Express["<<component>> Express API"]
+        Auth["<<component>> Auth service"]
+        AdminApi["<<component>> Admin table API"]
+        AuditService["<<component>> Audit service"]
+        Mailer["<<component>> Mail sender"]
+    end
+
+    subgraph Data["Data layer"]
+        PostgreSQL[("PostgreSQL")]
+        Registration[("registration_data")]
+        Personalization[("personalization_data")]
+        AuditLogs[("audit_logs")]
+    end
+
+    ReactApp --> AuthPages
+    ReactApp --> UserPage
+    ReactApp --> AdminPage
+    AuthPages -- "HTTP JSON" --> Express
+    UserPage -- "HTTP JSON" --> Express
+    AdminPage -- "HTTP JSON + SSE" --> Express
+    Express --> Auth
+    Express --> AdminApi
+    Express --> AuditService
+    Express --> Mailer
+    Auth --> PostgreSQL
+    AdminApi --> PostgreSQL
+    AuditService --> AuditLogs
+    PostgreSQL --> Registration
+    PostgreSQL --> Personalization

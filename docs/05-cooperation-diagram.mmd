@@ -1,0 +1,15 @@
+flowchart LR
+    User["1. Пользователь"]
+    UI["2. React UI"]
+    API["3. Express API"]
+    Profile["4. personalization_data"]
+    Audit["5. audit_logs"]
+
+    User -- "1: изменяет профиль" --> UI
+    UI -- "2: PUT /api/profile" --> API
+    API -- "3: SELECT old profile" --> Profile
+    API -- "4: UPDATE profile" --> Profile
+    API -- "5: buildAuditChanges()" --> API
+    API -- "6: INSERT audit record" --> Audit
+    API -- "7: success response" --> UI
+    UI -- "8: показывает результат" --> User

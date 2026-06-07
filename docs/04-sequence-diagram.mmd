@@ -1,0 +1,19 @@
+sequenceDiagram
+    participant User as Пользователь
+    participant UI as React UI
+    participant API as Express API
+    participant DB as PostgreSQL
+    participant Audit as audit_logs
+
+    User->>UI: Заполняет форму регистрации
+    UI->>API: POST /api/auth/register
+    API->>API: Проверка обязательных полей
+    API->>API: Хеширование пароля bcrypt
+    API->>DB: BEGIN
+    API->>DB: INSERT registration_data
+    API->>DB: INSERT personalization_data
+    API->>DB: INSERT balances
+    API->>Audit: INSERT user_register
+    API->>DB: COMMIT
+    API-->>UI: 201 Created
+    UI-->>User: Регистрация выполнена

@@ -1,0 +1,29 @@
+flowchart LR
+    User["Пользователь"]
+    Admin["Администратор"]
+
+    subgraph System["Информационная система водоканала"]
+        UC_Register(("Регистрация"))
+        UC_Login(("Вход"))
+        UC_Profile(("Просмотр профиля"))
+        UC_EditProfile(("Редактирование профиля"))
+        UC_ResetPassword(("Восстановление пароля"))
+        UC_AdminLogin(("Вход администратора"))
+        UC_ViewTables(("Просмотр таблиц"))
+        UC_EditTables(("Редактирование данных"))
+        UC_ViewAudit(("Просмотр журнала аудита"))
+    end
+
+    User --> UC_Register
+    User --> UC_Login
+    User --> UC_Profile
+    User --> UC_EditProfile
+    User --> UC_ResetPassword
+
+    Admin --> UC_AdminLogin
+    Admin --> UC_ViewTables
+    Admin --> UC_EditTables
+    Admin --> UC_ViewAudit
+
+    UC_EditProfile -. "создает запись" .-> UC_ViewAudit
+    UC_EditTables -. "создает запись" .-> UC_ViewAudit

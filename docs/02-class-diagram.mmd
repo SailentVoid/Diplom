@@ -1,0 +1,82 @@
+classDiagram
+    class RegistrationData {
+        +bigint id
+        +string fio
+        +string login
+        +string street
+        +string password_hash
+        +datetime created_at
+    }
+
+    class PersonalizationData {
+        +bigint id
+        +bigint registration_id
+        +string full_name
+        +date birth_date
+        +string phone
+        +string email
+        +string residential_address
+        +string registration_address
+        +datetime created_at
+        +datetime updated_at
+    }
+
+    class Admin {
+        +bigint id
+        +bigint registration_id
+        +string login
+        +string password_hash
+        +string role
+        +boolean is_active
+        +datetime created_at
+    }
+
+    class Balance {
+        +bigint id
+        +bigint registration_id
+        +decimal amount
+        +string currency
+        +datetime updated_at
+    }
+
+    class Debtor {
+        +bigint id
+        +bigint registration_id
+        +decimal debt_amount
+        +string reason
+        +boolean is_active
+        +datetime created_at
+        +datetime closed_at
+    }
+
+    class AuditLog {
+        +bigint id
+        +string actor_type
+        +bigint actor_id
+        +string actor_login
+        +string action
+        +string entity_table
+        +bigint entity_id
+        +json changes
+        +string ip_address
+        +datetime created_at
+    }
+
+    class PasswordResetCode {
+        +bigint id
+        +bigint registration_id
+        +string email
+        +string code_hash
+        +int attempts
+        +datetime expires_at
+        +datetime used_at
+        +datetime created_at
+    }
+
+    RegistrationData "1" --> "0..1" PersonalizationData : owns
+    RegistrationData "1" --> "0..1" Admin : may_have
+    RegistrationData "1" --> "0..1" Balance : owns
+    RegistrationData "1" --> "0..*" Debtor : has
+    RegistrationData "1" --> "0..*" PasswordResetCode : requests
+    AuditLog ..> RegistrationData : user_actor_or_entity
+    AuditLog ..> Admin : admin_actor

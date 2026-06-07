@@ -1,0 +1,27 @@
+flowchart TB
+    subgraph ClientNode["Узел: устройство пользователя"]
+        Browser["Браузер"]
+    end
+
+    subgraph AppNode["Узел: сервер приложения"]
+        StaticFiles["Vite/React static files"]
+        NodeProcess["Node.js process"]
+        ExpressApi["Express API :3000"]
+    end
+
+    subgraph DbNode["Узел: сервер БД"]
+        PgServer[("PostgreSQL")]
+        AppDatabase[("Database")]
+    end
+
+    subgraph MailNode["Узел: SMTP-сервер"]
+        Smtp["SMTP service"]
+    end
+
+    Browser -- "HTTPS/HTTP" --> StaticFiles
+    Browser -- "HTTP JSON, SSE" --> ExpressApi
+    StaticFiles --> NodeProcess
+    NodeProcess --> ExpressApi
+    ExpressApi -- "pg protocol" --> PgServer
+    PgServer --> AppDatabase
+    ExpressApi -- "SMTP" --> Smtp

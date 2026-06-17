@@ -2,12 +2,12 @@ import classes from '../header/header.module.scss'
 import axios from 'axios'
 import { jwtDecode } from 'jwt-decode'
 import logo from '../assets/icon.png' 
-import {Link, useLocation} from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { useNavigate } from "react-router-dom"
 
 export default function Header(){
     const navigate = useNavigate();
-    useLocation();
+    useLocation()
     const token = localStorage.getItem('token')
     let isRootUser = false
 
@@ -39,10 +39,16 @@ export default function Header(){
                     </div>
                 </div>
                 <div className={classes.LinkCont}>
-                    <Link to={'/Home_Page'}>Главная</Link>
-                    <Link to={'/User_PageLK'}>Личный кабинет</Link>
+                    {token ? (
+                        <>
+                            <Link to={'/Home_Page'}>Главная</Link>
+                            <Link to={'/User_PageLK'}>Личный кабинет</Link>
+                        </>
+                    ) : (
+                        <Link to={'/'}>Вход</Link>
+                    )}
                     {isRootUser && <Link to={'/Admin'}>Админ</Link>}
-                    <button type='exit' onClick={handleLogout} >Выход</button>
+                    {token && <button type='button' onClick={handleLogout} >Выход</button>}
                 </div>
             </nav>
         </header>

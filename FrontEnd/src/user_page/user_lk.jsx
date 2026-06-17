@@ -15,22 +15,22 @@ const profileFields = [
     {
         key: 'birthDate',
         label: 'Дата рождения',
-        type: 'date',
-        placeholder: '',
+        type: 'text',
+        placeholder: '11.06.2007',
         autoComplete: 'bday',
     },
     {
         key: 'phone',
         label: 'Телефон',
         type: 'tel',
-        placeholder: '+375 (29) 000-00-00',
+        placeholder: '+375(11)222-33-44',
         autoComplete: 'tel',
     },
     {
         key: 'email',
         label: 'Email',
         type: 'email',
-        placeholder: 'example@bar.by',
+        placeholder: 'example1@Exammp.com',
         autoComplete: 'email',
     },
     {
@@ -51,15 +51,23 @@ const profileFields = [
 
 const initialUserData = {
     fullName: 'Ковалёв Артём Сергеевич',
-    birthDate: '2001-09-14',
-    phone: '+375 (29) 123-45-67',
+    birthDate: '11.06.2007',
+    phone: '+375(29)123-45-67',
     email: 'kovalev@example.by',
     residentialAddress: 'Брестская обл., г. Барановичи, ул. Брестская, д. 12, кв. 8',
     registrationAddress: 'Брестская обл., г. Барановичи, ул. Советская, д. 18',
 }
 
 const initialFinancialData = {
-    balance: 0,
+    hotWater: 0,
+    coldWater: 0,
+    hotWaterPreviousReading: 0,
+    coldWaterPreviousReading: 0,
+    hotWaterUnit: 'м3',
+    coldWaterUnit: 'м3',
+    hotWaterDebt: 0,
+    coldWaterDebt: 0,
+    amountToPay: 0,
     activeDebt: 0,
     currency: 'BYN',
 }
@@ -69,6 +77,50 @@ const formatMoney = (value, currency = 'BYN') =>
         style: 'currency',
         currency,
     }).format(Number(value) || 0)
+
+const formatReading = (value, unit = 'м3') =>
+    `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 3 }).format(Number(value) || 0)} ${unit}`
+
+const formatRuDate = (value) => {
+    if (!value) return ''
+    const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/)
+    return match ? `${match[3]}.${match[2]}.${match[1]}` : String(value)
+}
+
+const onlyDigits = (value) => String(value || '').replace(/\D/g, '')
+
+const formatPhoneInput = (value) => {
+    let digits = onlyDigits(value)
+
+    if (digits.startsWith('375')) {
+        digits = digits.slice(3)
+    }
+
+    digits = digits.slice(0, 9)
+
+    const code = digits.slice(0, 2)
+    const first = digits.slice(2, 5)
+    const second = digits.slice(5, 7)
+    const third = digits.slice(7, 9)
+
+    let formatted = '+375'
+    if (code) formatted += `(${code}`
+    if (code.length === 2) formatted += ')'
+    if (first) formatted += first
+    if (second) formatted += `-${second}`
+    if (third) formatted += `-${third}`
+
+    return formatted
+}
+
+const formatRuDateInput = (value) => {
+    const digits = onlyDigits(value).slice(0, 8)
+    const day = digits.slice(0, 2)
+    const month = digits.slice(2, 4)
+    const year = digits.slice(4, 8)
+
+    return [day, month, year].filter(Boolean).join('.')
+}
 
 export default function PageLK() {
     const [userData, setUserData] = useState(initialUserData)
@@ -96,14 +148,22 @@ export default function PageLK() {
 
             const profile = {
                 fullName: response.data.fullName || '',
-                birthDate: response.data.birthDate ? response.data.birthDate.slice(0, 10) : '',
+                birthDate: formatRuDate(response.data.birthDate),
                 phone: response.data.phone || '',
                 email: response.data.email || '',
                 residentialAddress: response.data.residentialAddress || '',
                 registrationAddress: response.data.registrationAddress || '',
             }
             const finance = {
-                balance: response.data.balance || 0,
+                hotWater: response.data.hotWater || 0,
+                coldWater: response.data.coldWater || 0,
+                hotWaterPreviousReading: response.data.hotWaterPreviousReading || response.data.hotWater || 0,
+                coldWaterPreviousReading: response.data.coldWaterPreviousReading || response.data.coldWater || 0,
+                hotWaterUnit: response.data.hotWaterUnit || 'м3',
+                coldWaterUnit: response.data.coldWaterUnit || 'м3',
+                hotWaterDebt: response.data.hotWaterDebt || 0,
+                coldWaterDebt: response.data.coldWaterDebt || 0,
+                amountToPay: response.data.amountToPay || 0,
                 activeDebt: response.data.activeDebt || 0,
                 currency: response.data.currency || 'BYN',
             }
@@ -111,7 +171,7 @@ export default function PageLK() {
             setUserData(profile)
             setFormData(profile)
             setFinancialData(finance)
-            setPaymentAmount((currentAmount) => currentAmount || (finance.activeDebt > 0 ? String(finance.activeDebt) : ''))
+            setPaymentAmount(finance.amountToPay > 0 ? String(finance.amountToPay) : '')
         } catch (error) {
             setMessage(error.response?.data?.error || 'Не удалось загрузить данные профиля')
         }
@@ -122,7 +182,17 @@ export default function PageLK() {
     }, [loadProfile])
 
     const handleChange = (field, value) => {
-        setFormData((prev) => ({ ...prev, [field]: value }))
+        let nextValue = value
+
+        if (field === 'phone') {
+            nextValue = formatPhoneInput(value)
+        }
+
+        if (field === 'birthDate') {
+            nextValue = formatRuDateInput(value)
+        }
+
+        setFormData((prev) => ({ ...prev, [field]: nextValue }))
     }
 
     const handleSave = async () => {
@@ -151,7 +221,7 @@ export default function PageLK() {
         setFormData({ ...userData })
     }
 
-    const handleCreateTelegramPayment = async () => {
+    const handleCreateFakePayment = async () => {
         const token = localStorage.getItem('token')
         const amount = Number(paymentAmount)
 
@@ -167,13 +237,13 @@ export default function PageLK() {
 
         try {
             setPaymentLoading(true)
-            setPaymentMessage('')
+            setPaymentMessage('Откройте и подтвердите фиктивную оплату. Подтверждение займёт 2 секунды.')
 
             const response = await axios.post(
-                'http://localhost:3000/api/payments/telegram/orders',
+                'http://localhost:3000/api/payments/fake/quick-pay',
                 {
                     amount,
-                    description: 'Оплата услуг филиала "Барановичиводоканал"',
+                    description: 'Фиктивная оплата услуг водоснабжения',
                 },
                 {
                     headers: {
@@ -183,18 +253,12 @@ export default function PageLK() {
             )
 
             setPaymentOrder(response.data.order)
-
-            if (response.data.botUrl) {
-                window.open(response.data.botUrl, '_blank', 'noopener,noreferrer')
-            }
-
-            setPaymentMessage(
-                response.data.setupRequired
-                    ? 'Платеж создан. Для реальной оплаты нужно указать токены Telegram-бота и платежного провайдера в .env backend.'
-                    : 'Платеж создан. Открой Telegram-бота и подтверди оплату.'
-            )
+            setPaymentMessage(response.data.message || 'Фиктивная оплата подтверждена. Задолженность обновлена.')
+            localStorage.setItem('paymentsUpdatedAt', String(Date.now()))
+            window.dispatchEvent(new Event('payments-updated'))
+            await loadProfile()
         } catch (error) {
-            setPaymentMessage(error.response?.data?.error || 'Не удалось создать платеж Telegram')
+            setPaymentMessage(error.response?.data?.error || 'Не удалось выполнить фиктивную оплату')
         } finally {
             setPaymentLoading(false)
         }
@@ -262,7 +326,7 @@ export default function PageLK() {
                     <div className={classes.PaymentHeader}>
                         <div>
                             <p className={classes.Eyebrow}>Оплата</p>
-                            <h2>Платеж через Telegram-бота</h2>
+                            <h2>Фиктивная оплата</h2>
                         </div>
                         {paymentOrder && (
                             <span className={classes.PaymentStatus}>
@@ -273,14 +337,38 @@ export default function PageLK() {
 
                     <div className={classes.FinanceGrid}>
                         <div className={classes.FinanceItem}>
-                            <span>Баланс</span>
-                            <strong>{formatMoney(financialData.balance, financialData.currency)}</strong>
+                            <span>Горячая вода — последние показания</span>
+                            <strong>{formatReading(financialData.hotWater, financialData.hotWaterUnit)}</strong>
                         </div>
                         <div className={classes.FinanceItem}>
-                            <span>Активная задолженность</span>
+                            <span>Холодная вода — последние показания</span>
+                            <strong>{formatReading(financialData.coldWater, financialData.coldWaterUnit)}</strong>
+                        </div>
+                        <div className={classes.FinanceItem}>
+                            <span>Долг за горячую воду</span>
+                            <strong>{formatMoney(financialData.hotWaterDebt, financialData.currency)}</strong>
+                        </div>
+                        <div className={classes.FinanceItem}>
+                            <span>Долг за холодную воду</span>
+                            <strong>{formatMoney(financialData.coldWaterDebt, financialData.currency)}</strong>
+                        </div>
+                        <div className={`${classes.FinanceItem} ${financialData.amountToPay > 0 ? classes.DebtItem : ''}`}>
+                            <span>К оплате сейчас</span>
+                            <strong>{formatMoney(financialData.amountToPay, financialData.currency)}</strong>
+                        </div>
+                        <div className={classes.FinanceItem}>
+                            <span>Активная задолженность в реестре</span>
                             <strong>{formatMoney(financialData.activeDebt, financialData.currency)}</strong>
                         </div>
                     </div>
+
+                    {financialData.amountToPay > 0 && (
+                        <p className={classes.PaymentHint}>
+                            Система посчитала долг по последним начислениям: к оплате нужно
+                            {' '}<strong>{formatMoney(financialData.amountToPay, financialData.currency)}</strong>.
+                            Это сумма активных начислений по показаниям счётчиков и другим открытым долгам.
+                        </p>
+                    )}
 
                     <div className={classes.PaymentForm}>
                         <label>
@@ -296,25 +384,204 @@ export default function PageLK() {
                         </label>
                         <button
                             type="button"
-                            onClick={handleCreateTelegramPayment}
+                            onClick={handleCreateFakePayment}
                             disabled={paymentLoading}
                         >
-                            {paymentLoading ? 'Создание платежа...' : 'Оплатить в Telegram'}
+                            {paymentLoading ? 'Подтверждение оплаты...' : 'Оплатить фиктивно'}
                         </button>
                     </div>
 
-                    {paymentOrder?.telegramPayload && (
+                    {paymentOrder?.id && (
                         <p className={classes.PaymentHint}>
-                            Заказ №{paymentOrder.id}. После подтверждения оплаты бот пришлет webhook,
-                            а система обновит задолженность и баланс.
-                            {paymentOrder.invoiceCurrency === 'XTR' &&
-                                ` К оплате: ${paymentOrder.invoiceAmount} Telegram Stars.`}
+                            Платёж №{paymentOrder.id} проведён как фиктивная оплата. История платежей и задолженность обновлены автоматически.
                         </p>
                     )}
                     {paymentMessage && <p className={classes.PaymentMessage}>{paymentMessage}</p>}
                 </section>
+
+                <section className={classes.PaymentPanel}>
+                    <div className={classes.PaymentHeader}>
+                        <div>
+                            <p className={classes.Eyebrow}>Тестирование</p>
+                            <h2>Расчет оплаты по показаниям счетчиков</h2>
+                        </div>
+                    </div>
+
+                    <p style={{ marginBottom: '1rem', color: '#666' }}>
+                        Введите только новые показания счётчиков. Старые показания автоматически берутся из базы. После расчёта новые показания сохраняются и при следующей оплате уже становятся старыми.
+                    </p>
+
+                    <FakePaymentSection
+                        onPaymentComplete={loadProfile}
+                        currency={financialData.currency}
+                        financialData={financialData}
+                    />
+                </section>
                 {message && <p className={classes.Message}>{message}</p>}
             </div>
         </section>
+    )
+}
+
+function FakePaymentSection({ onPaymentComplete, currency, financialData }) {
+    const [hotWaterReading, setHotWaterReading] = useState('')
+    const [coldWaterReading, setColdWaterReading] = useState('')
+    const [tariffs, setTariffs] = useState({})
+    const [loading, setLoading] = useState(false)
+    const [message, setMessage] = useState('')
+
+    const hotPrevious = Number(financialData?.hotWaterPreviousReading ?? financialData?.hotWater ?? 0)
+    const coldPrevious = Number(financialData?.coldWaterPreviousReading ?? financialData?.coldWater ?? 0)
+
+    useEffect(() => {
+        const token = localStorage.getItem('token')
+
+        if (!token) {
+            return
+        }
+
+        axios
+            .get('http://localhost:3000/api/tariffs', {
+                headers: { Authorization: `Bearer ${token}` },
+            })
+            .then((response) => {
+                const nextTariffs = {}
+                ;(response.data.tariffs || []).forEach((tariff) => {
+                    nextTariffs[tariff.water_type] = {
+                        rate: Number(tariff.rate_per_unit) || 0,
+                        unit: tariff.unit || 'м3',
+                    }
+                })
+                setTariffs(nextTariffs)
+            })
+            .catch(() => {})
+    }, [])
+
+    const calculateLine = (newValue, previousValue, waterType) => {
+        const reading = Number(newValue)
+
+        if (!Number.isFinite(reading) || reading < previousValue) {
+            return 0
+        }
+
+        const consumption = reading - previousValue
+
+        if (waterType === 'hot_water') {
+            const coldWaterPart = consumption * (tariffs.cold_water?.rate || 0)
+            const heatingPart = consumption * (tariffs.hot_water?.rate || 0)
+
+            return Math.round((coldWaterPart + heatingPart) * 100) / 100
+        }
+
+        const tariff = tariffs[waterType]?.rate || 0
+        return Math.round(consumption * tariff * 100) / 100
+    }
+
+    const hotEstimated = calculateLine(hotWaterReading, hotPrevious, 'hot_water')
+    const coldEstimated = calculateLine(coldWaterReading, coldPrevious, 'cold_water')
+    const totalEstimated = Math.round((hotEstimated + coldEstimated) * 100) / 100
+
+    const handleFakePayment = async () => {
+        const token = localStorage.getItem('token')
+        const hotReading = hotWaterReading === '' ? null : Number(hotWaterReading)
+        const coldReading = coldWaterReading === '' ? null : Number(coldWaterReading)
+
+        if (!token) {
+            setMessage('Нужно войти в личный кабинет')
+            return
+        }
+
+        if (hotReading === null && coldReading === null) {
+            setMessage('Укажите новые показания хотя бы одного счетчика')
+            return
+        }
+
+        if (hotReading !== null && hotReading < hotPrevious) {
+            setMessage(`Горячая вода: новые показания не могут быть меньше старых (${hotPrevious})`)
+            return
+        }
+
+        if (coldReading !== null && coldReading < coldPrevious) {
+            setMessage(`Холодная вода: новые показания не могут быть меньше старых (${coldPrevious})`)
+            return
+        }
+
+        try {
+            setLoading(true)
+            setMessage('')
+
+            const response = await axios.post(
+                'http://localhost:3000/api/payments/fake',
+                {
+                    hotWaterReading: hotReading,
+                    coldWaterReading: coldReading,
+                    description: 'Расчет оплаты по показаниям счетчика',
+                },
+                {
+                    headers: { Authorization: `Bearer ${token}` },
+                }
+            )
+
+            setMessage(response.data.message || 'Показания сохранены. Эти значения станут старыми при следующем расчёте.')
+            setHotWaterReading('')
+            setColdWaterReading('')
+            localStorage.setItem('paymentsUpdatedAt', String(Date.now()))
+            window.dispatchEvent(new Event('payments-updated'))
+            await onPaymentComplete()
+        } catch (error) {
+            setMessage(error.response?.data?.error || 'Не удалось сохранить показания счетчиков')
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    return (
+        <div className={classes.PaymentForm}>
+            <label>
+                <span>Горячая вода — старые показания из базы</span>
+                <strong className={classes.ReadOnlyValue}>
+                    {formatReading(hotPrevious, financialData?.hotWaterUnit || 'м3')}
+                </strong>
+            </label>
+            <label>
+                <span>Горячая вода — новые показания</span>
+                <input
+                    type="number"
+                    min={hotPrevious}
+                    step="0.001"
+                    value={hotWaterReading}
+                    onChange={(event) => setHotWaterReading(event.target.value)}
+                    placeholder="Введите новые показания"
+                />
+            </label>
+            <label>
+                <span>Холодная вода — старые показания из базы</span>
+                <strong className={classes.ReadOnlyValue}>
+                    {formatReading(coldPrevious, financialData?.coldWaterUnit || 'м3')}
+                </strong>
+            </label>
+            <label>
+                <span>Холодная вода — новые показания</span>
+                <input
+                    type="number"
+                    min={coldPrevious}
+                    step="0.001"
+                    value={coldWaterReading}
+                    onChange={(event) => setColdWaterReading(event.target.value)}
+                    placeholder="Введите новые показания"
+                />
+            </label>
+            <p className={classes.PaymentHint}>
+                Предварительное начисление к оплате: <strong>{formatMoney(totalEstimated, currency)}</strong>. Горячая вода считается как холодная вода по расходу + подогрев: расход м³ × тариф холодной воды + расход м³ × тариф Гкал
+            </p>
+            <button
+                type="button"
+                onClick={handleFakePayment}
+                disabled={loading}
+            >
+                {loading ? 'Расчет...' : 'Сохранить показания и начислить оплату'}
+            </button>
+            {message && <p className={classes.PaymentMessage}>{message}</p>}
+        </div>
     )
 }

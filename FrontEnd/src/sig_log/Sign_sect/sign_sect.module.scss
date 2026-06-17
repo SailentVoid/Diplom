@@ -1,6 +1,7 @@
 .Register {
     width: 100%;
     min-height: 100vh;
+    padding: 32px 0;
     display: flex;
     justify-content: center;
     align-items: center;
@@ -17,8 +18,8 @@
             border-radius: 12px;
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
             width: 80%;
-            max-width: 500px;
-            height: 560px;
+            max-width: 540px;
+            min-height: 720px;
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -63,11 +64,13 @@
                 flex: 1;
                 display: flex;
                 flex-direction: column;
-                justify-content: space-around;
                 align-items: center;
+                gap: 14px;
+                padding: 24px 0;
 
                 h2 {
                     width: 100%;
+                    margin: 0 0 4px;
                     text-align: center;
                     font-size: 1.5rem;
                     font-weight: 700;
@@ -139,10 +142,33 @@
                 }
 
                 > p {
-                    width: 100%;
+                    width: 80%;
+                    min-height: 20px;
+                    margin: 0;
                     text-align: center;
                     font-size: 0.9rem;
-                    height: 20px;
+                    color: #b91c1c;
+                }
+            }
+        }
+    }
+}
+
+@media (max-width: 640px) {
+    .Register {
+        padding: 20px 0;
+
+        main > div {
+            width: calc(100% - 32px);
+            min-height: auto;
+
+            form {
+                gap: 12px;
+
+                > div,
+                > button,
+                > p {
+                    width: 86%;
                 }
             }
         }

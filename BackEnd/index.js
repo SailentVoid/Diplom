@@ -1,4 +1,4 @@
-﻿require('dotenv').config()
+require('dotenv').config()
 const express = require('express')
 const cors = require('cors')
 const bcrypt = require('bcryptjs')
@@ -52,30 +52,97 @@ const TELEGRAM_STAR_BYN_RATE = Number(process.env.TELEGRAM_STAR_BYN_RATE) || 0.1
 const PORT = Number(process.env.PORT) || 3000
 const schemaPath = path.join(__dirname, 'db', 'schema.sql')
 const schemaSql = fs.readFileSync(schemaPath, 'utf8').replace(/^\uFEFF/, '')
+const migrationPath = path.join(__dirname, 'db', 'migrate_v2.sql')
+const migrationSql = fs.existsSync(migrationPath) ? fs.readFileSync(migrationPath, 'utf8').replace(/^\uFEFF/, '') : null
+
+const WATER_TYPES = ['hot_water', 'cold_water']
+const WATER_TYPE_LABELS = { hot_water: 'Горячая вода', cold_water: 'Холодная вода' }
+const getWaterTypeLabel = (waterType) => WATER_TYPE_LABELS[waterType] || waterType
+const OFFICIAL_WATER_TARIFFS = [
+    { waterType: 'cold_water', rate: '1.8494', unit: 'м3' },
+    // Тариф на hot_water хранит стоимость подогрева (тепловой энергии).
+    // Горячая вода считается как холодная вода по расходу + подогрев:
+    // сумма = расход_горячей_воды_м3 * тариф_холодной_воды + расход_горячей_воды_м3 * тариф_подогрева_Гкал.
+    { waterType: 'hot_water', rate: '27.2323', unit: 'Гкал' },
+]
+
+const DEBT_TO_PAY_SQL = `
+    GREATEST(0, -COALESCE(hw.amount, 0))
+    + GREATEST(0, -COALESCE(cw.amount, 0))
+`
+
+const formatDate = (date = new Date()) => {
+    const d = date instanceof Date ? date : new Date(date)
+    const year = d.getFullYear()
+    const month = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+}
+
+const formatTimestamp = () => {
+    const now = new Date()
+    const date = formatDate(now)
+    const time = now.toTimeString().slice(0, 8)
+    return `${date} ${time}`
+}
+
+const log = (level, context, message) => {
+    const timestamp = formatTimestamp()
+    const levelLabel = level.toUpperCase()
+    const line = `[${timestamp}] [${levelLabel}] ${context}: ${message}`
+    if (level === 'error') {
+        console.error(line)
+    } else if (level === 'warn') {
+        console.warn(line)
+    } else {
+        console.log(line)
+    }
+}
+
+const logInfo = (context, message) => log('info', context, message)
+const logError = (context, message) => log('error', context, message)
+const logWarn = (context, message) => log('warn', context, message)
 
 const adminTables = {
     registration_data: {
-        title: 'Данные регистрации',
-        columns: ['id', 'fio', 'login', 'street', 'balance', 'active_debt', 'debtor_status', 'created_at'],
+        title: 'Учётные записи',
+        columns: ['id', 'fio', 'login', 'street', 'hot_water', 'cold_water', 'hot_water_debt', 'cold_water_debt', 'amount_to_pay', 'active_debt', 'debtor_status', 'created_at'],
         persistedColumns: ['id', 'fio', 'login', 'street', 'created_at'],
         editable: ['fio', 'login', 'street'],
-        createable: [],
+        createable: ['fio', 'login', 'street', 'password'],
         selectSql: `
             SELECT
                 r.id,
                 r.fio,
                 r.login,
                 r.street,
-                COALESCE(b.amount, 0)::text AS balance,
+                COALESCE(hmr.current_reading, 0)::text AS hot_water,
+                COALESCE(cmr.current_reading, 0)::text AS cold_water,
+                COALESCE(hd.hot_debt, 0)::text AS hot_water_debt,
+                COALESCE(cd.cold_debt, 0)::text AS cold_water_debt,
+                COALESCE(d.active_debt, 0)::text AS amount_to_pay,
                 COALESCE(d.active_debt, 0)::text AS active_debt,
                 CASE
-                    WHEN COALESCE(b.amount, 0) < 0 OR COALESCE(d.active_debt, 0) > 0
+                    WHEN COALESCE(d.active_debt, 0) > 0
                         THEN 'Должник'
                     ELSE 'Нет долга'
                 END AS debtor_status,
                 r.created_at
             FROM registration_data r
-            LEFT JOIN balances b ON b.registration_id = r.id
+            LEFT JOIN water_meter_readings hmr ON hmr.registration_id = r.id AND hmr.water_type = 'hot_water'
+            LEFT JOIN water_meter_readings cmr ON cmr.registration_id = r.id AND cmr.water_type = 'cold_water'
+            LEFT JOIN LATERAL (
+                SELECT COALESCE(SUM(debt_amount) FILTER (WHERE is_active), 0) AS hot_debt
+                FROM debtors
+                WHERE registration_id = r.id
+                  AND reason LIKE 'Начисление по показаниям счетчика: Горячая вода%'
+            ) hd ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT COALESCE(SUM(debt_amount) FILTER (WHERE is_active), 0) AS cold_debt
+                FROM debtors
+                WHERE registration_id = r.id
+                  AND reason LIKE 'Начисление по показаниям счетчика: Холодная вода%'
+            ) cd ON TRUE
             LEFT JOIN LATERAL (
                 SELECT COALESCE(SUM(debt_amount) FILTER (WHERE is_active), 0) AS active_debt
                 FROM debtors
@@ -89,16 +156,33 @@ const adminTables = {
                 r.fio,
                 r.login,
                 r.street,
-                COALESCE(b.amount, 0)::text AS balance,
+                COALESCE(hmr.current_reading, 0)::text AS hot_water,
+                COALESCE(cmr.current_reading, 0)::text AS cold_water,
+                COALESCE(hd.hot_debt, 0)::text AS hot_water_debt,
+                COALESCE(cd.cold_debt, 0)::text AS cold_water_debt,
+                COALESCE(d.active_debt, 0)::text AS amount_to_pay,
                 COALESCE(d.active_debt, 0)::text AS active_debt,
                 CASE
-                    WHEN COALESCE(b.amount, 0) < 0 OR COALESCE(d.active_debt, 0) > 0
+                    WHEN COALESCE(d.active_debt, 0) > 0
                         THEN 'Должник'
                     ELSE 'Нет долга'
                 END AS debtor_status,
                 r.created_at
             FROM registration_data r
-            LEFT JOIN balances b ON b.registration_id = r.id
+            LEFT JOIN water_meter_readings hmr ON hmr.registration_id = r.id AND hmr.water_type = 'hot_water'
+            LEFT JOIN water_meter_readings cmr ON cmr.registration_id = r.id AND cmr.water_type = 'cold_water'
+            LEFT JOIN LATERAL (
+                SELECT COALESCE(SUM(debt_amount) FILTER (WHERE is_active), 0) AS hot_debt
+                FROM debtors
+                WHERE registration_id = r.id
+                  AND reason LIKE 'Начисление по показаниям счетчика: Горячая вода%'
+            ) hd ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT COALESCE(SUM(debt_amount) FILTER (WHERE is_active), 0) AS cold_debt
+                FROM debtors
+                WHERE registration_id = r.id
+                  AND reason LIKE 'Начисление по показаниям счетчика: Холодная вода%'
+            ) cd ON TRUE
             LEFT JOIN LATERAL (
                 SELECT COALESCE(SUM(debt_amount) FILTER (WHERE is_active), 0) AS active_debt
                 FROM debtors
@@ -111,7 +195,7 @@ const adminTables = {
         title: 'Данные персонализации',
         columns: [
             'id',
-            'registration_id',
+            'user_fio',
             'full_name',
             'birth_date',
             'phone',
@@ -121,8 +205,8 @@ const adminTables = {
             'created_at',
             'updated_at',
         ],
+        persistedColumns: ['id', 'registration_id', 'full_name', 'birth_date', 'phone', 'email', 'residential_address', 'registration_address', 'created_at', 'updated_at'],
         editable: [
-            'registration_id',
             'full_name',
             'birth_date',
             'phone',
@@ -130,74 +214,166 @@ const adminTables = {
             'residential_address',
             'registration_address',
         ],
-        createable: [
-            'registration_id',
-            'full_name',
-            'birth_date',
-            'phone',
-            'email',
-            'residential_address',
-            'registration_address',
-        ],
-    },
-    admins: {
-        title: 'Админы',
-        columns: ['id', 'registration_id', 'login', 'role', 'is_active', 'created_at'],
-        editable: ['registration_id', 'login', 'role', 'is_active'],
         createable: [],
-    },
-    balances: {
-        title: 'Баланс',
-        columns: ['id', 'registration_id', 'login', 'amount', 'currency', 'debtor_status', 'updated_at'],
-        persistedColumns: ['id', 'registration_id', 'amount', 'currency', 'updated_at'],
-        editable: ['registration_id', 'amount', 'currency'],
-        createable: ['registration_id', 'amount', 'currency'],
         selectSql: `
             SELECT
-                b.id,
-                b.registration_id,
-                r.login,
-                b.amount::text AS amount,
-                b.currency,
-                CASE WHEN b.amount < 0 THEN 'Должник' ELSE 'Нет долга' END AS debtor_status,
-                b.updated_at
-            FROM balances b
-            LEFT JOIN registration_data r ON r.id = b.registration_id
-            ORDER BY b.id ASC
+                p.id,
+                p.registration_id,
+                COALESCE(r.fio, 'Пользователь #' || p.registration_id) AS user_fio,
+                p.full_name,
+                p.birth_date,
+                p.phone,
+                p.email,
+                p.residential_address,
+                p.registration_address,
+                p.created_at,
+                p.updated_at
+            FROM personalization_data p
+            LEFT JOIN registration_data r ON r.id = p.registration_id
+            ORDER BY p.id ASC
         `,
         selectByIdSql: `
             SELECT
-                b.id,
-                b.registration_id,
+                p.id,
+                p.registration_id,
+                COALESCE(r.fio, 'Пользователь #' || p.registration_id) AS user_fio,
+                p.full_name,
+                p.birth_date,
+                p.phone,
+                p.email,
+                p.residential_address,
+                p.registration_address,
+                p.created_at,
+                p.updated_at
+            FROM personalization_data p
+            LEFT JOIN registration_data r ON r.id = p.registration_id
+            WHERE p.id = $1
+        `,
+    },
+    admins: {
+        title: 'Админы',
+        columns: ['id', 'user_fio', 'login', 'role', 'is_active', 'created_at'],
+        persistedColumns: ['id', 'registration_id', 'login', 'role', 'is_active', 'created_at'],
+        editable: ['registration_id', 'login', 'role', 'is_active'],
+        createable: [],
+        selectSql: `
+            SELECT a.id, a.registration_id, COALESCE(r.fio, 'Пользователь #' || a.registration_id) AS user_fio, a.login, a.role, a.is_active, a.created_at
+            FROM admins a
+            LEFT JOIN registration_data r ON r.id = a.registration_id
+            ORDER BY a.id ASC
+        `,
+        selectByIdSql: `
+            SELECT a.id, a.registration_id, COALESCE(r.fio, 'Пользователь #' || a.registration_id) AS user_fio, a.login, a.role, a.is_active, a.created_at
+            FROM admins a
+            LEFT JOIN registration_data r ON r.id = a.registration_id
+            WHERE a.id = $1
+        `,
+    },
+    water_balances: {
+        title: 'Задолженность воды',
+        columns: ['id', 'user_fio', 'login', 'water_type_label', 'amount', 'currency', 'debtor_status', 'updated_at'],
+        persistedColumns: ['id', 'registration_id', 'water_type', 'amount', 'currency', 'updated_at'],
+        editable: ['registration_id', 'water_type', 'amount', 'currency'],
+        createable: ['registration_id', 'water_type', 'amount', 'currency'],
+        selectSql: `
+            SELECT
+                wb.id,
+                wb.registration_id,
+                COALESCE(r.fio, 'Пользователь #' || wb.registration_id) AS user_fio,
                 r.login,
-                b.amount::text AS amount,
-                b.currency,
-                CASE WHEN b.amount < 0 THEN 'Должник' ELSE 'Нет долга' END AS debtor_status,
-                b.updated_at
-            FROM balances b
-            LEFT JOIN registration_data r ON r.id = b.registration_id
-            WHERE b.id = $1
+                CASE wb.water_type WHEN 'hot_water' THEN 'Горячая вода' WHEN 'cold_water' THEN 'Холодная вода' ELSE wb.water_type END AS water_type_label,
+                wb.amount::text AS amount,
+                wb.currency,
+                CASE WHEN wb.amount < 0 THEN 'Должник' ELSE 'Нет долга' END AS debtor_status,
+                wb.updated_at
+            FROM water_balances wb
+            LEFT JOIN registration_data r ON r.id = wb.registration_id
+            ORDER BY wb.id ASC
+        `,
+        selectByIdSql: `
+            SELECT
+                wb.id,
+                wb.registration_id,
+                COALESCE(r.fio, 'Пользователь #' || wb.registration_id) AS user_fio,
+                r.login,
+                CASE wb.water_type WHEN 'hot_water' THEN 'Горячая вода' WHEN 'cold_water' THEN 'Холодная вода' ELSE wb.water_type END AS water_type_label,
+                wb.amount::text AS amount,
+                wb.currency,
+                CASE WHEN wb.amount < 0 THEN 'Должник' ELSE 'Нет долга' END AS debtor_status,
+                wb.updated_at
+            FROM water_balances wb
+            LEFT JOIN registration_data r ON r.id = wb.registration_id
+            WHERE wb.id = $1
+        `,
+    },
+
+    water_meter_readings: {
+        title: 'Показания счетчиков',
+        columns: ['id', 'user_fio', 'login', 'water_type_label', 'current_reading', 'unit', 'updated_at'],
+        persistedColumns: ['id', 'registration_id', 'water_type', 'current_reading', 'unit', 'updated_at'],
+        editable: ['registration_id', 'water_type', 'current_reading', 'unit'],
+        createable: ['registration_id', 'water_type', 'current_reading', 'unit'],
+        selectSql: `
+            SELECT
+                wmr.id,
+                wmr.registration_id,
+                COALESCE(r.fio, 'Пользователь #' || wmr.registration_id) AS user_fio,
+                r.login,
+                CASE wmr.water_type WHEN 'hot_water' THEN 'Горячая вода' WHEN 'cold_water' THEN 'Холодная вода' ELSE wmr.water_type END AS water_type_label,
+                wmr.current_reading::text AS current_reading,
+                wmr.unit,
+                wmr.updated_at
+            FROM water_meter_readings wmr
+            LEFT JOIN registration_data r ON r.id = wmr.registration_id
+            ORDER BY wmr.id ASC
+        `,
+        selectByIdSql: `
+            SELECT
+                wmr.id,
+                wmr.registration_id,
+                COALESCE(r.fio, 'Пользователь #' || wmr.registration_id) AS user_fio,
+                r.login,
+                CASE wmr.water_type WHEN 'hot_water' THEN 'Горячая вода' WHEN 'cold_water' THEN 'Холодная вода' ELSE wmr.water_type END AS water_type_label,
+                wmr.current_reading::text AS current_reading,
+                wmr.unit,
+                wmr.updated_at
+            FROM water_meter_readings wmr
+            LEFT JOIN registration_data r ON r.id = wmr.registration_id
+            WHERE wmr.id = $1
         `,
     },
     debtors: {
         title: 'Должники',
         columns: [
             'id',
-            'registration_id',
+            'user_fio',
             'debt_amount',
             'reason',
             'is_active',
             'created_at',
             'closed_at',
         ],
+        persistedColumns: ['id', 'registration_id', 'debt_amount', 'reason', 'is_active', 'created_at', 'closed_at'],
         editable: ['registration_id', 'debt_amount', 'reason', 'is_active', 'closed_at'],
         createable: ['registration_id', 'debt_amount', 'reason', 'is_active', 'closed_at'],
+        selectSql: `
+            SELECT d.id, d.registration_id, COALESCE(r.fio, 'Пользователь #' || d.registration_id) AS user_fio, d.debt_amount::text AS debt_amount, d.reason, d.is_active, d.created_at, d.closed_at
+            FROM debtors d
+            LEFT JOIN registration_data r ON r.id = d.registration_id
+            ORDER BY d.id DESC
+        `,
+        selectByIdSql: `
+            SELECT d.id, d.registration_id, COALESCE(r.fio, 'Пользователь #' || d.registration_id) AS user_fio, d.debt_amount::text AS debt_amount, d.reason, d.is_active, d.created_at, d.closed_at
+            FROM debtors d
+            LEFT JOIN registration_data r ON r.id = d.registration_id
+            WHERE d.id = $1
+        `,
     },
     telegram_payment_orders: {
-        title: 'Платежи Telegram',
+        title: 'Платежи',
         columns: [
             'id',
-            'registration_id',
+            'user_fio',
             'amount',
             'currency',
             'payment_method',
@@ -214,8 +390,142 @@ const adminTables = {
             'invoice_sent_at',
             'paid_at',
         ],
+        persistedColumns: ['id', 'registration_id', 'amount', 'currency', 'payment_method', 'invoice_currency', 'invoice_amount', 'status', 'telegram_payload', 'telegram_chat_id', 'telegram_username', 'description', 'telegram_payment_charge_id', 'provider_payment_charge_id', 'created_at', 'invoice_sent_at', 'paid_at'],
         editable: ['status', 'description'],
         createable: [],
+        selectSql: `
+            SELECT
+                tpo.id,
+                tpo.registration_id,
+                COALESCE(r.fio, 'Пользователь #' || tpo.registration_id) AS user_fio,
+                tpo.amount::text AS amount,
+                tpo.currency,
+                tpo.payment_method,
+                tpo.invoice_currency,
+                tpo.invoice_amount,
+                tpo.status,
+                tpo.telegram_payload,
+                tpo.telegram_chat_id,
+                tpo.telegram_username,
+                tpo.description,
+                tpo.telegram_payment_charge_id,
+                tpo.provider_payment_charge_id,
+                tpo.created_at,
+                tpo.invoice_sent_at,
+                tpo.paid_at
+            FROM telegram_payment_orders tpo
+            LEFT JOIN registration_data r ON r.id = tpo.registration_id
+            ORDER BY tpo.id DESC
+        `,
+        selectByIdSql: `
+            SELECT
+                tpo.id,
+                tpo.registration_id,
+                COALESCE(r.fio, 'Пользователь #' || tpo.registration_id) AS user_fio,
+                tpo.amount::text AS amount,
+                tpo.currency,
+                tpo.payment_method,
+                tpo.invoice_currency,
+                tpo.invoice_amount,
+                tpo.status,
+                tpo.telegram_payload,
+                tpo.telegram_chat_id,
+                tpo.telegram_username,
+                tpo.description,
+                tpo.telegram_payment_charge_id,
+                tpo.provider_payment_charge_id,
+                tpo.created_at,
+                tpo.invoice_sent_at,
+                tpo.paid_at
+            FROM telegram_payment_orders tpo
+            LEFT JOIN registration_data r ON r.id = tpo.registration_id
+            WHERE tpo.id = $1
+        `,
+    },
+    tariffs: {
+        title: 'Тарифы',
+        columns: ['id', 'water_type_label', 'rate_per_unit', 'unit', 'currency', 'effective_from', 'is_active', 'created_at'],
+        persistedColumns: ['id', 'water_type', 'rate_per_unit', 'unit', 'currency', 'effective_from', 'is_active', 'created_at'],
+        editable: ['water_type', 'rate_per_unit', 'unit', 'currency', 'effective_from', 'is_active'],
+        createable: ['water_type', 'rate_per_unit', 'unit', 'currency', 'effective_from', 'is_active'],
+        selectSql: `
+            SELECT
+                t.id,
+                t.water_type,
+                CASE t.water_type WHEN 'hot_water' THEN 'Горячая вода' WHEN 'cold_water' THEN 'Холодная вода' ELSE t.water_type END AS water_type_label,
+                t.rate_per_unit::text AS rate_per_unit,
+                t.unit,
+                t.currency,
+                t.effective_from,
+                t.is_active,
+                t.created_at
+            FROM tariffs t
+            WHERE t.is_active = TRUE
+            ORDER BY t.water_type, t.effective_from DESC
+        `,
+        selectByIdSql: `
+            SELECT
+                t.id,
+                t.water_type,
+                CASE t.water_type WHEN 'hot_water' THEN 'Горячая вода' WHEN 'cold_water' THEN 'Холодная вода' ELSE t.water_type END AS water_type_label,
+                t.rate_per_unit::text AS rate_per_unit,
+                t.unit,
+                t.currency,
+                t.effective_from,
+                t.is_active,
+                t.created_at
+            FROM tariffs t
+            WHERE t.id = $1
+        `,
+    },
+    fake_payments: {
+        title: 'Тестовые платежи',
+        columns: ['id', 'user_fio', 'login', 'water_type_label', 'previous_reading', 'current_reading', 'consumption', 'tariff_rate', 'unit', 'amount', 'currency', 'description', 'status', 'created_at'],
+        persistedColumns: ['id', 'registration_id', 'water_type', 'previous_reading', 'current_reading', 'consumption', 'tariff_rate', 'unit', 'amount', 'currency', 'description', 'status', 'created_at'],
+        editable: ['status', 'description'],
+        createable: [],
+        selectSql: `
+            SELECT
+                fp.id,
+                fp.registration_id,
+                COALESCE(r.fio, 'Пользователь #' || fp.registration_id) AS user_fio,
+                r.login,
+                CASE fp.water_type WHEN 'hot_water' THEN 'Горячая вода' WHEN 'cold_water' THEN 'Холодная вода' ELSE fp.water_type END AS water_type_label,
+                fp.previous_reading::text AS previous_reading,
+                fp.current_reading::text AS current_reading,
+                fp.consumption::text AS consumption,
+                fp.tariff_rate::text AS tariff_rate,
+                CASE fp.water_type WHEN 'hot_water' THEN 'м3' ELSE fp.unit END AS unit,
+                fp.amount::text AS amount,
+                fp.currency,
+                fp.description,
+                fp.status,
+                fp.created_at
+            FROM fake_payments fp
+            LEFT JOIN registration_data r ON r.id = fp.registration_id
+            ORDER BY fp.id DESC
+        `,
+        selectByIdSql: `
+            SELECT
+                fp.id,
+                fp.registration_id,
+                COALESCE(r.fio, 'Пользователь #' || fp.registration_id) AS user_fio,
+                r.login,
+                CASE fp.water_type WHEN 'hot_water' THEN 'Горячая вода' WHEN 'cold_water' THEN 'Холодная вода' ELSE fp.water_type END AS water_type_label,
+                fp.previous_reading::text AS previous_reading,
+                fp.current_reading::text AS current_reading,
+                fp.consumption::text AS consumption,
+                fp.tariff_rate::text AS tariff_rate,
+                CASE fp.water_type WHEN 'hot_water' THEN 'м3' ELSE fp.unit END AS unit,
+                fp.amount::text AS amount,
+                fp.currency,
+                fp.description,
+                fp.status,
+                fp.created_at
+            FROM fake_payments fp
+            LEFT JOIN registration_data r ON r.id = fp.registration_id
+            WHERE fp.id = $1
+        `,
     },
 }
 
@@ -252,12 +562,131 @@ const getAdminRow = (db, tableName, table, id) => {
     )
 }
 
-const normalizeAdminValue = (value) => {
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const PHONE_PATTERN = /^\+375\(\d{2}\)\d{3}-\d{2}-\d{2}$/
+const BIRTH_DATE_PATTERN = /^\d{2}\.\d{2}\.\d{4}$/
+
+const parseRuDateToIso = (value) => {
+    if (!value) {
+        return ''
+    }
+
+    const raw = String(value).trim()
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+        return raw
+    }
+
+    const match = raw.match(/^(\d{2})\.(\d{2})\.(\d{4})$/)
+
+    if (!match) {
+        return null
+    }
+
+    const [, day, month, year] = match
+    const dayNumber = Number(day)
+    const monthNumber = Number(month)
+    const yearNumber = Number(year)
+
+    if (yearNumber < 1 || yearNumber > 9999 || monthNumber < 1 || monthNumber > 12 || dayNumber < 1 || dayNumber > 31) {
+        return null
+    }
+
+    const date = new Date(`${year}-${month}-${day}T00:00:00Z`)
+
+    if (
+        Number.isNaN(date.getTime()) ||
+        date.getUTCFullYear() !== yearNumber ||
+        date.getUTCMonth() + 1 !== monthNumber ||
+        date.getUTCDate() !== dayNumber
+    ) {
+        return null
+    }
+
+    return `${year}-${month}-${day}`
+}
+
+const validateContactFields = (payload, { requireBirthDate = false } = {}) => {
+    if (Object.hasOwn(payload, 'email') && payload.email) {
+        if (!EMAIL_PATTERN.test(String(payload.email).trim())) {
+            return 'Ошибка в почте: укажите email по шаблону example1@Exammp.com'
+        }
+    }
+
+    if (Object.hasOwn(payload, 'phone') && payload.phone) {
+        if (!PHONE_PATTERN.test(String(payload.phone).trim())) {
+            return 'Ошибка в телефоне: укажите номер по шаблону +375(11)222-33-44'
+        }
+    }
+
+    if ((requireBirthDate || Object.hasOwn(payload, 'birth_date') || Object.hasOwn(payload, 'birthDate')) && (payload.birth_date || payload.birthDate)) {
+        const source = payload.birth_date || payload.birthDate
+        if (!BIRTH_DATE_PATTERN.test(String(source).trim()) || !parseRuDateToIso(source)) {
+            return 'Ошибка с датой рождения: укажите дату по шаблону 11.06.2007'
+        }
+    }
+
+    return null
+}
+
+const validateRequiredFields = (payload, fields) => {
+    for (const { key, label } of fields) {
+        if (!payload[key] || !String(payload[key]).trim()) {
+            return `Ошибка в поле «${label}»: поле обязательно для заполнения`
+        }
+    }
+
+    return null
+}
+
+const validateAdminPayload = (tableName, payload, mode = 'create') => {
+    if (tableName === 'registration_data') {
+        if (!payload.fio || !String(payload.fio).trim()) return 'Ошибка в ФИО: поле обязательно для заполнения'
+        if (!payload.login || !String(payload.login).trim()) return 'Ошибка в логине: поле обязательно для заполнения'
+        if (!payload.street || !String(payload.street).trim()) return 'Ошибка в адресе: поле обязательно для заполнения'
+        if (mode === 'create' && (!payload.password || String(payload.password).length < 3)) {
+            return 'Ошибка в пароле: укажите пароль минимум из 3 символов'
+        }
+    }
+
+    if (tableName === 'personalization_data') {
+        const requiredError = validateRequiredFields(payload, [
+            { key: 'full_name', label: 'ФИО' },
+            { key: 'birth_date', label: 'Дата рождения' },
+            { key: 'phone', label: 'Телефон' },
+            { key: 'email', label: 'Email' },
+            { key: 'residential_address', label: 'Адрес проживания' },
+            { key: 'registration_address', label: 'Адрес регистрации' },
+        ])
+        if (requiredError) return requiredError
+
+        const contactError = validateContactFields(payload)
+        if (contactError) return contactError
+    }
+
+    if (['water_balances', 'water_meter_readings', 'debtors'].includes(tableName)) {
+        if (!payload.registration_id || !String(payload.registration_id).trim()) {
+            return 'Ошибка в поле «ФИО пользователя»: выберите пользователя из списка'
+        }
+    }
+
+    if (tableName === 'tariffs' && payload.water_type && !WATER_TYPES.includes(payload.water_type)) {
+        return 'Ошибка в типе воды: выберите «Горячая вода» или «Холодная вода»'
+    }
+
+    return null
+}
+
+const normalizeAdminValue = (value, column = '') => {
     if (value === '') {
         return null
     }
 
-    return value
+    if (column === 'birth_date' || column === 'effective_from' || column === 'closed_at') {
+        return parseRuDateToIso(value) || value
+    }
+
+    return typeof value === 'string' ? value.trim() : value
 }
 
 const mailTransporter = SMTP_HOST
@@ -286,7 +715,7 @@ const hashPasswordResetCode = (email, code) =>
 
 const sendPasswordResetEmail = async (email, code) => {
     if (!mailTransporter) {
-        console.log(`Password reset code for ${email}: ${code}`)
+        logInfo('Сброс пароля', `Код для ${email}: ${code}`)
         return
     }
 
@@ -316,6 +745,42 @@ const normalizePaymentAmount = (value) => {
     return Math.round(amount * 100) / 100
 }
 
+
+const normalizeMeterReading = (value) => {
+    if (value === undefined || value === null || value === '') {
+        return null
+    }
+
+    const reading = Number(value)
+
+    if (!Number.isFinite(reading)) {
+        return null
+    }
+
+    return Math.round(reading * 1000) / 1000
+}
+
+const getActiveTariff = async (client, waterType) => {
+    const result = await client.query(
+        `
+            SELECT rate_per_unit::text AS rate_per_unit, unit, currency
+            FROM tariffs
+            WHERE water_type = $1 AND is_active = TRUE
+            ORDER BY effective_from DESC, id DESC
+            LIMIT 1
+        `,
+        [waterType]
+    )
+
+    const fallback = OFFICIAL_WATER_TARIFFS.find((tariff) => tariff.waterType === waterType)
+
+    return {
+        rate: Number(result.rows[0]?.rate_per_unit || fallback?.rate || 0),
+        unit: result.rows[0]?.unit || fallback?.unit || 'м3',
+        currency: result.rows[0]?.currency || TELEGRAM_PAYMENT_CURRENCY,
+    }
+}
+
 const normalizeTelegramPaymentMode = () =>
     TELEGRAM_PAYMENT_MODE === 'stars' ? 'telegram_stars' : 'telegram_provider'
 
@@ -331,6 +796,8 @@ const calculateTelegramInvoiceAmount = (amount) => {
 }
 
 const AUTO_DEBT_REASON = 'Автоматически создано: отрицательный баланс'
+const METER_READING_DEBT_REASON_PREFIX = 'Начисление по показаниям счетчика'
+
 
 const syncNegativeBalanceDebt = async (
     client,
@@ -338,11 +805,15 @@ const syncNegativeBalanceDebt = async (
     { actorType = 'system', actorId = null, actorLogin = 'system', ipAddress = null } = {}
 ) => {
     const registrationId = balanceRow?.registration_id
+    const waterType = balanceRow?.water_type || 'hot_water'
     const balanceAmount = normalizePaymentAmount(balanceRow?.amount || 0)
 
     if (!registrationId || balanceAmount === null) {
         return null
     }
+
+    const waterLabel = WATER_TYPE_LABELS[waterType] || waterType
+    const autoDebtReason = `${AUTO_DEBT_REASON} (${waterLabel})`
 
     const activeDebtResult = await client.query(
         `
@@ -354,7 +825,7 @@ const syncNegativeBalanceDebt = async (
             ORDER BY id ASC
             FOR UPDATE
         `,
-        [registrationId, AUTO_DEBT_REASON]
+        [registrationId, autoDebtReason]
     )
 
     if (balanceAmount < 0) {
@@ -381,7 +852,7 @@ const syncNegativeBalanceDebt = async (
                         UPDATE debtors
                         SET debt_amount = 0,
                             is_active = FALSE,
-                            closed_at = NOW()
+                            closed_at = CURRENT_DATE
                         WHERE id = ANY($1::bigint[])
                     `,
                     [activeDebtResult.rows.slice(1).map((debt) => debt.id)]
@@ -402,7 +873,7 @@ const syncNegativeBalanceDebt = async (
                                 from: previousDebtAmount,
                                 to: debtAmount,
                             },
-                            reason: AUTO_DEBT_REASON,
+                            reason: autoDebtReason,
                         },
                         ipAddress,
                     },
@@ -419,7 +890,7 @@ const syncNegativeBalanceDebt = async (
                 VALUES ($1, $2, $3, TRUE)
                 RETURNING id
             `,
-            [registrationId, debtAmount, AUTO_DEBT_REASON]
+            [registrationId, debtAmount, autoDebtReason]
         )
         const debtId = insertedDebt.rows[0].id
 
@@ -435,7 +906,7 @@ const syncNegativeBalanceDebt = async (
                     after: {
                         registration_id: registrationId,
                         debt_amount: debtAmount,
-                        reason: AUTO_DEBT_REASON,
+                        reason: autoDebtReason,
                         is_active: true,
                     },
                 },
@@ -456,7 +927,7 @@ const syncNegativeBalanceDebt = async (
             UPDATE debtors
             SET debt_amount = 0,
                 is_active = FALSE,
-                closed_at = NOW()
+                closed_at = CURRENT_DATE
             WHERE id = ANY($1::bigint[])
         `,
         [activeDebtResult.rows.map((debt) => debt.id)]
@@ -475,7 +946,7 @@ const syncNegativeBalanceDebt = async (
                 after: {
                     debt_amount: 0,
                     is_active: false,
-                    reason: AUTO_DEBT_REASON,
+                    reason: autoDebtReason,
                 },
             },
             ipAddress,
@@ -549,8 +1020,8 @@ const sendTelegramMessage = (chatId, text) =>
 const sendTelegramInvoice = (chatId, order) =>
     telegramBotApi('sendInvoice', {
         chat_id: chatId,
-        title: 'Оплата услуг водоканала',
-        description: order.description || 'Оплата задолженности или пополнение баланса',
+        title: 'Оплата услуг водоснабжения',
+        description: order.description || 'Оплата услуг водоснабжения (горячая/холодная вода)',
         payload: order.telegram_payload,
         provider_token:
             normalizeTelegramPaymentMode() === 'telegram_stars' ? '' : TELEGRAM_PAYMENT_PROVIDER_TOKEN,
@@ -588,25 +1059,11 @@ const applyTelegramPaymentToAccount = async (client, registrationId, amount) => 
         const paidPart = Math.min(remaining, debtAmount)
         const newDebtAmount = normalizePaymentAmount(debtAmount - paidPart)
 
-        if (debt.reason === AUTO_DEBT_REASON) {
-            await client.query(
-                `
-                    INSERT INTO balances (registration_id, amount, currency)
-                    VALUES ($1, $2, $3)
-                    ON CONFLICT (registration_id) DO UPDATE
-                    SET amount = balances.amount + EXCLUDED.amount,
-                        currency = EXCLUDED.currency,
-                        updated_at = NOW()
-                `,
-                [registrationId, paidPart, TELEGRAM_PAYMENT_CURRENCY]
-            )
-        }
-
         if (newDebtAmount <= 0) {
             await client.query(
                 `
                     UPDATE debtors
-                    SET debt_amount = 0, is_active = FALSE, closed_at = NOW()
+                    SET debt_amount = 0, is_active = FALSE, closed_at = CURRENT_DATE
                     WHERE id = $1
                 `,
                 [debt.id]
@@ -627,17 +1084,25 @@ const applyTelegramPaymentToAccount = async (client, registrationId, amount) => 
     }
 
     if (remaining > 0) {
-        await client.query(
-            `
-                INSERT INTO balances (registration_id, amount, currency)
-                VALUES ($1, $2, $3)
-                ON CONFLICT (registration_id) DO UPDATE
-                SET amount = balances.amount + EXCLUDED.amount,
-                    currency = EXCLUDED.currency,
-                    updated_at = NOW()
-            `,
-            [registrationId, remaining, TELEGRAM_PAYMENT_CURRENCY]
-        )
+        const halfAmount = normalizePaymentAmount(remaining / 2)
+        const hotAmount = normalizePaymentAmount(remaining - halfAmount)
+
+        for (const wt of WATER_TYPES) {
+            const creditAmount = wt === 'hot_water' ? hotAmount : halfAmount
+            if (creditAmount > 0) {
+                await client.query(
+                    `
+                        INSERT INTO water_balances (registration_id, water_type, amount, currency)
+                        VALUES ($1, $2, $3, $4)
+                        ON CONFLICT (registration_id, water_type) DO UPDATE
+                        SET amount = water_balances.amount + EXCLUDED.amount,
+                            currency = EXCLUDED.currency,
+                            updated_at = CURRENT_DATE
+                    `,
+                    [registrationId, wt, creditAmount, TELEGRAM_PAYMENT_CURRENCY]
+                )
+            }
+        }
     }
 
     return {
@@ -682,7 +1147,7 @@ const markTelegramPaymentPaid = async (telegramPayload, successfulPayment, rawUp
                     telegram_payment_charge_id = $1,
                     provider_payment_charge_id = $2,
                     raw_update = $3,
-                    paid_at = NOW()
+                    paid_at = CURRENT_DATE
                 WHERE id = $4
                 RETURNING *
             `,
@@ -803,6 +1268,53 @@ const createAuditLog = async (
     return result.rows[0]
 }
 
+
+const getDatabaseErrorMessage = (error, operation = 'сохранения') => {
+    const detail = error?.detail || error?.message || ''
+
+    if (error?.code === '23502') {
+        const columnLabels = {
+            registration_id: 'ФИО пользователя',
+            fio: 'ФИО',
+            login: 'Логин',
+            street: 'Адрес',
+            password_hash: 'Пароль',
+            birth_date: 'Дата рождения',
+            phone: 'Телефон',
+            email: 'Email',
+        }
+        const column = columnLabels[error?.column] || error?.column
+
+        return `Ошибка ${operation} записи: поле «${column || 'обязательное поле'}» обязательно для заполнения`
+    }
+
+    if (error?.code === '23505') {
+        if (detail.includes('login')) {
+            return `Ошибка ${operation} записи: такой логин уже существует`
+        }
+
+        if (detail.includes('registration_id')) {
+            return `Ошибка ${operation} записи: для этого пользователя такая связанная запись уже существует`
+        }
+
+        return `Ошибка ${operation} записи: такая запись уже существует`
+    }
+
+    if (error?.code === '23503') {
+        return `Ошибка ${operation} записи: выбранного пользователя или связанной записи не существует`
+    }
+
+    if (error?.code === '23514') {
+        return `Ошибка ${operation} записи: значение не проходит ограничение таблицы`
+    }
+
+    if (error?.code === '22P02') {
+        return `Ошибка ${operation} записи: неверный формат числа, даты или ID`
+    }
+
+    return `Ошибка ${operation} записи: ${detail || 'проверьте заполнение полей'}`
+}
+
 const verifyAdminToken = (token) => {
     try {
         const admin = jwt.verify(token, ADMIN_JWT_SECRET)
@@ -829,8 +1341,8 @@ const syncExistingBalanceDebts = async () => {
 
         const balancesResult = await client.query(
             `
-                SELECT id, registration_id, amount::text AS amount
-                FROM balances
+                SELECT id, registration_id, water_type, amount::text AS amount
+                FROM water_balances
                 ORDER BY id ASC
                 FOR UPDATE
             `
@@ -872,12 +1384,53 @@ const migrateLegacyUsers = async () => {
     `)
 
     await pool.query(`
-        INSERT INTO balances (registration_id, amount)
-        SELECT r.id, 0
+        INSERT INTO water_balances (registration_id, water_type, amount)
+        SELECT r.id, 'hot_water', 0
         FROM registration_data r
-        LEFT JOIN balances b ON b.registration_id = r.id
-        WHERE b.id IS NULL
+        LEFT JOIN water_balances wb ON wb.registration_id = r.id AND wb.water_type = 'hot_water'
+        WHERE wb.id IS NULL
     `)
+
+    await pool.query(`
+        INSERT INTO water_balances (registration_id, water_type, amount)
+        SELECT r.id, 'cold_water', 0
+        FROM registration_data r
+        LEFT JOIN water_balances wb ON wb.registration_id = r.id AND wb.water_type = 'cold_water'
+        WHERE wb.id IS NULL
+    `)
+}
+
+const seedTariffs = async () => {
+    const client = await pool.connect()
+
+    try {
+        await client.query('BEGIN')
+
+        await client.query(
+            `
+                DELETE FROM tariffs
+                WHERE water_type = ANY($1::text[])
+            `,
+            [OFFICIAL_WATER_TARIFFS.map((tariff) => tariff.waterType)]
+        )
+
+        for (const tariff of OFFICIAL_WATER_TARIFFS) {
+            await client.query(
+                `
+                    INSERT INTO tariffs (water_type, rate_per_unit, unit, currency, effective_from, is_active)
+                    VALUES ($1, $2, $3, 'BYN', DATE '2025-06-01', TRUE)
+                `,
+                [tariff.waterType, tariff.rate, tariff.unit]
+            )
+        }
+
+        await client.query('COMMIT')
+    } catch (error) {
+        await client.query('ROLLBACK')
+        throw error
+    } finally {
+        client.release()
+    }
 }
 
 const seedAdmin = async () => {
@@ -900,10 +1453,15 @@ const seedAdmin = async () => {
 
 const initializeDatabase = async () => {
     await createSchema()
+    if (migrationSql) {
+        await pool.query(migrationSql)
+        logInfo('Миграция', 'Миграция БД выполнена успешно')
+    }
     await seedAdmin()
+    await seedTariffs()
     await migrateLegacyUsers()
     await syncExistingBalanceDebts()
-    console.log('Database schema initialized')
+    logInfo('Инициализация', 'Схема БД инициализирована')
 }
 
 const authenticateToken = (req, res, next) => {
@@ -938,10 +1496,30 @@ const authenticateAdminToken = (req, res, next) => {
 }
 
 app.post('/api/auth/register', async (req, res) => {
-    const { fio, login, street, password } = req.body
+    const { fio, login, street, phone, email, birthDate, password } = req.body
 
-    if (!fio || !password || !login || !street) {
-        return res.status(400).json({ error: 'Заполни все поля' })
+    const requiredError = validateRequiredFields(req.body, [
+        { key: 'fio', label: 'ФИО' },
+        { key: 'login', label: 'Логин' },
+        { key: 'street', label: 'Адрес' },
+        { key: 'phone', label: 'Телефон' },
+        { key: 'email', label: 'Email' },
+        { key: 'birthDate', label: 'Дата рождения' },
+        { key: 'password', label: 'Пароль' },
+    ])
+
+    if (requiredError) {
+        return res.status(400).json({ error: requiredError })
+    }
+
+    const contactError = validateContactFields({ phone, email, birthDate }, { requireBirthDate: true })
+
+    if (contactError) {
+        return res.status(400).json({ error: contactError })
+    }
+
+    if (String(password).length < 6) {
+        return res.status(400).json({ error: 'Ошибка в пароле: укажите пароль минимум из 6 символов' })
     }
 
     const client = await pool.connect()
@@ -949,30 +1527,60 @@ app.post('/api/auth/register', async (req, res) => {
     try {
         await client.query('BEGIN')
 
-        const hashedPassword = await bcrypt.hash(password, 10)
+        const normalizedFio = String(fio).trim()
+        const normalizedLogin = String(login).trim()
+        const normalizedStreet = String(street).trim()
+        const normalizedPhone = String(phone).trim()
+        const normalizedEmail = normalizeEmail(email)
+        const normalizedBirthDate = parseRuDateToIso(birthDate)
+        const hashedPassword = await bcrypt.hash(String(password), 10)
         const registrationResult = await client.query(
             `
                 INSERT INTO registration_data (fio, login, street, password_hash)
                 VALUES ($1, $2, $3, $4)
                 RETURNING id, fio, login, street
             `,
-            [fio, login, street, hashedPassword]
+            [normalizedFio, normalizedLogin, normalizedStreet, hashedPassword]
         )
 
         const user = registrationResult.rows[0]
 
         await client.query(
             `
-                INSERT INTO personalization_data (registration_id, full_name, residential_address, registration_address)
-                VALUES ($1, $2, $3, $4)
+                INSERT INTO personalization_data (
+                    registration_id,
+                    full_name,
+                    birth_date,
+                    phone,
+                    email,
+                    residential_address,
+                    registration_address
+                )
+                VALUES ($1, $2, $3::date, $4, $5, $6, $7)
             `,
-            [user.id, fio, street, street]
+            [
+                user.id,
+                normalizedFio,
+                normalizedBirthDate,
+                normalizedPhone,
+                normalizedEmail,
+                normalizedStreet,
+                normalizedStreet,
+            ]
         )
 
         await client.query(
             `
-                INSERT INTO balances (registration_id, amount)
-                VALUES ($1, 0)
+                INSERT INTO water_balances (registration_id, water_type, amount)
+                VALUES ($1, 'hot_water', 0)
+            `,
+            [user.id]
+        )
+
+        await client.query(
+            `
+                INSERT INTO water_balances (registration_id, water_type, amount)
+                VALUES ($1, 'cold_water', 0)
             `,
             [user.id]
         )
@@ -991,6 +1599,9 @@ app.post('/api/auth/register', async (req, res) => {
                         fio: user.fio,
                         login: user.login,
                         street: user.street,
+                        phone: normalizedPhone,
+                        email: normalizedEmail,
+                        birthDate: normalizedBirthDate,
                     },
                 },
                 ipAddress: req.ip,
@@ -1011,7 +1622,7 @@ app.post('/api/auth/register', async (req, res) => {
             return res.status(409).json({ error: 'Логин уже занят' })
         }
 
-        console.error('Registration error:', error)
+        logError('Регистрация', error.message || String(error))
         return res.status(500).json({ error: 'Ошибка сервера при регистрации' })
     } finally {
         client.release()
@@ -1061,7 +1672,7 @@ app.post('/api/auth/login', async (req, res) => {
             token,
         })
     } catch (error) {
-        console.error('Login error:', error)
+        logError('Вход', error.message || String(error))
         return res.status(500).json({ error: 'Ошибка сервера' })
     }
 })
@@ -1103,7 +1714,7 @@ app.post('/api/auth/password-reset/request', async (req, res) => {
             await client.query(
                 `
                     UPDATE password_reset_codes
-                    SET used_at = NOW()
+                    SET used_at = CURRENT_DATE
                     WHERE registration_id = $1 AND used_at IS NULL
                 `,
                 [user.id]
@@ -1147,7 +1758,7 @@ app.post('/api/auth/password-reset/request', async (req, res) => {
 
         return res.json({ message: successMessage })
     } catch (error) {
-        console.error('Password reset request error:', error)
+        logError('Сброс пароля (запрос)', error.message || String(error))
         return res.status(500).json({ error: 'Не удалось отправить код восстановления' })
     }
 })
@@ -1193,7 +1804,7 @@ app.post('/api/auth/password-reset/confirm', async (req, res) => {
         const reset = resetResult.rows[0]
 
         if (new Date(reset.expires_at).getTime() < Date.now()) {
-            await client.query('UPDATE password_reset_codes SET used_at = NOW() WHERE id = $1', [
+            await client.query('UPDATE password_reset_codes SET used_at = CURRENT_DATE WHERE id = $1', [
                 reset.id,
             ])
             await client.query('COMMIT')
@@ -1222,7 +1833,7 @@ app.post('/api/auth/password-reset/confirm', async (req, res) => {
             passwordHash,
             reset.registration_id,
         ])
-        await client.query('UPDATE password_reset_codes SET used_at = NOW() WHERE id = $1', [
+        await client.query('UPDATE password_reset_codes SET used_at = CURRENT_DATE WHERE id = $1', [
             reset.id,
         ])
 
@@ -1250,8 +1861,96 @@ app.post('/api/auth/password-reset/confirm', async (req, res) => {
         return res.json({ message: 'Пароль обновлен, теперь можно войти' })
     } catch (error) {
         await client.query('ROLLBACK')
-        console.error('Password reset confirm error:', error)
+        logError('Сброс пароля (подтверждение)', error.message || String(error))
         return res.status(500).json({ error: 'Не удалось обновить пароль' })
+    } finally {
+        client.release()
+    }
+})
+
+
+app.post('/api/payments/fake/quick-pay', authenticateToken, async (req, res) => {
+    const requestedAmount = normalizePaymentAmount(req.body.amount)
+
+    if (!requestedAmount || requestedAmount <= 0) {
+        return res.status(400).json({ error: 'Укажи сумму оплаты больше 0' })
+    }
+
+    if (requestedAmount > 10000) {
+        return res.status(400).json({ error: 'Сумма одного платежа не должна превышать 10000' })
+    }
+
+    const client = await pool.connect()
+
+    try {
+        await new Promise((resolve) => setTimeout(resolve, 2000))
+        await client.query('BEGIN')
+
+        const payload = `fakepay_${req.user.id}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`
+        const applyResult = await applyTelegramPaymentToAccount(client, req.user.id, requestedAmount)
+
+        const result = await client.query(
+            `
+                INSERT INTO telegram_payment_orders (
+                    registration_id,
+                    amount,
+                    currency,
+                    payment_method,
+                    invoice_currency,
+                    invoice_amount,
+                    status,
+                    telegram_payload,
+                    description,
+                    paid_at,
+                    telegram_payment_charge_id,
+                    provider_payment_charge_id
+                )
+                VALUES ($1, $2, $3, 'telegram_provider', $3, $4, 'paid', $5, $6, CURRENT_DATE, $7, $7)
+                RETURNING *
+            `,
+            [
+                req.user.id,
+                requestedAmount,
+                TELEGRAM_PAYMENT_CURRENCY,
+                Math.round(requestedAmount * 100),
+                payload,
+                req.body.description || 'Фиктивная оплата после подтверждения пользователем',
+                `fake_${payload}`,
+            ]
+        )
+
+        await createAuditLog(
+            {
+                actorType: 'user',
+                actorId: req.user.id,
+                actorLogin: req.user.login,
+                action: 'fake_payment_paid',
+                entityTable: 'telegram_payment_orders',
+                entityId: result.rows[0].id,
+                changes: {
+                    after: {
+                        amount: requestedAmount,
+                        currency: TELEGRAM_PAYMENT_CURRENCY,
+                        status: 'paid',
+                        applied_to_debt: applyResult.appliedToDebt,
+                    },
+                },
+                ipAddress: req.ip,
+            },
+            client
+        )
+
+        await client.query('COMMIT')
+
+        return res.status(201).json({
+            message: `Оплата подтверждена. Списано с активной задолженности: ${applyResult.appliedToDebt} ${TELEGRAM_PAYMENT_CURRENCY}`,
+            order: serializePaymentOrder(result.rows[0]),
+            appliedToDebt: applyResult.appliedToDebt,
+        })
+    } catch (error) {
+        await client.query('ROLLBACK')
+        logError('Фиктивная оплата', error.message || String(error))
+        return res.status(500).json({ error: 'Не удалось выполнить фиктивную оплату' })
     } finally {
         client.release()
     }
@@ -1281,7 +1980,7 @@ app.post('/api/payments/telegram/orders', authenticateToken, async (req, res) =>
         }
 
         const payload = `barpay_${req.user.id}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`
-        const description = req.body.description || 'Оплата услуг водоснабжения и водоотведения'
+        const description = req.body.description || 'Оплата услуг водоснабжения (горячая/холодная вода)'
         const paymentMethod = normalizeTelegramPaymentMode()
         const invoiceCurrency = getTelegramInvoiceCurrency()
         const invoiceAmount = calculateTelegramInvoiceAmount(requestedAmount)
@@ -1339,7 +2038,7 @@ app.post('/api/payments/telegram/orders', authenticateToken, async (req, res) =>
             setupRequired: !isTelegramPaymentsConfigured(),
         })
     } catch (error) {
-        console.error('Telegram payment order create error:', error)
+        logError('Платеж Telegram (создание)', error.message || String(error))
         return res.status(500).json({ error: 'Не удалось создать платеж Telegram' })
     }
 })
@@ -1361,7 +2060,7 @@ app.get('/api/payments/telegram/orders/:id', authenticateToken, async (req, res)
 
         return res.json({ order: serializePaymentOrder(result.rows[0]) })
     } catch (error) {
-        console.error('Telegram payment order status error:', error)
+        logError('Платеж Telegram (статус)', error.message || String(error))
         return res.status(500).json({ error: 'Не удалось получить статус платежа' })
     }
 })
@@ -1449,7 +2148,7 @@ app.post('/api/telegram/webhook/:secret', async (req, res) => {
                     SET status = 'invoice_sent',
                         telegram_chat_id = $1,
                         telegram_username = $2,
-                        invoice_sent_at = NOW()
+                        invoice_sent_at = CURRENT_DATE
                     WHERE id = $3
                 `,
                 [message.chat.id, message.from?.username || null, order.id]
@@ -1460,7 +2159,7 @@ app.post('/api/telegram/webhook/:secret', async (req, res) => {
 
         return res.json({ ok: true })
     } catch (error) {
-        console.error('Telegram webhook error:', error)
+        logError('Telegram webhook', error.message || String(error))
         return res.status(500).json({ ok: false })
     }
 })
@@ -1512,7 +2211,7 @@ app.post('/api/admin/login', async (req, res) => {
             token,
         })
     } catch (error) {
-        console.error('Admin login error:', error)
+        logError('Вход администратора', error.message || String(error))
         return res.status(500).json({ error: 'Ошибка сервера при входе администратора' })
     }
 })
@@ -1540,7 +2239,7 @@ app.get('/api/admin/logs', authenticateAdminToken, async (req, res) => {
 
         return res.json({ logs: result.rows })
     } catch (error) {
-        console.error('Audit logs read error:', error)
+        logError('Чтение журнала действий', error.message || String(error))
         return res.status(500).json({ error: 'Ошибка чтения журнала действий' })
     }
 })
@@ -1605,7 +2304,7 @@ app.get('/api/admin/tables/:tableName', authenticateAdminToken, async (req, res)
             rows: result.rows,
         })
     } catch (error) {
-        console.error('Admin table read error:', error)
+        logError('Чтение таблицы', error.message || String(error))
         return res.status(500).json({ error: 'Ошибка чтения таблицы' })
     }
 })
@@ -1617,15 +2316,28 @@ app.post('/api/admin/tables/:tableName', authenticateAdminToken, async (req, res
         return res.status(400).json({ error: 'Добавление записей для этой таблицы недоступно' })
     }
 
+    const validationError = validateAdminPayload(req.params.tableName, req.body, 'create')
+
+    if (validationError) {
+        return res.status(400).json({ error: validationError })
+    }
+
     const columns = table.createable.filter((column) => Object.hasOwn(req.body, column))
 
     if (columns.length === 0) {
         return res.status(400).json({ error: 'Нет данных для добавления' })
     }
 
+    const insertColumns = columns.filter((column) => column !== 'password')
     const tableColumns = getAdminTableColumns(table)
-    const values = columns.map((column) => normalizeAdminValue(req.body[column]))
-    const placeholders = columns.map((_, index) => `$${index + 1}`)
+    const values = insertColumns.map((column) => normalizeAdminValue(req.body[column], column))
+
+    if (req.params.tableName === 'registration_data') {
+        insertColumns.push('password_hash')
+        values.push(await bcrypt.hash(String(req.body.password), 10))
+    }
+
+    const placeholders = values.map((_, index) => `$${index + 1}`)
 
     const client = await pool.connect()
 
@@ -1634,7 +2346,7 @@ app.post('/api/admin/tables/:tableName', authenticateAdminToken, async (req, res
 
         const result = await client.query(
             `
-                INSERT INTO ${req.params.tableName} (${columns.join(', ')})
+                INSERT INTO ${req.params.tableName} (${insertColumns.join(', ')})
                 VALUES (${placeholders.join(', ')})
                 RETURNING ${tableColumns.join(', ')}
             `,
@@ -1642,7 +2354,31 @@ app.post('/api/admin/tables/:tableName', authenticateAdminToken, async (req, res
         )
         let row = result.rows[0]
 
-        if (req.params.tableName === 'balances') {
+        if (req.params.tableName === 'registration_data') {
+            await client.query(
+                `
+                    INSERT INTO personalization_data (registration_id, full_name, residential_address, registration_address)
+                    VALUES ($1, $2, $3, $3)
+                    ON CONFLICT (registration_id) DO NOTHING
+                `,
+                [row.id, row.fio, row.street]
+            )
+
+            for (const waterType of WATER_TYPES) {
+                const tariff = await getActiveTariff(client, waterType)
+
+                await client.query(
+                    `
+                        INSERT INTO water_meter_readings (registration_id, water_type, current_reading, unit)
+                        VALUES ($1, $2, 0, $3)
+                        ON CONFLICT (registration_id, water_type) DO NOTHING
+                    `,
+                    [row.id, waterType, waterType === 'hot_water' ? 'м3' : tariff.unit]
+                )
+            }
+        }
+
+        if (req.params.tableName === 'water_balances') {
             await syncNegativeBalanceDebt(client, row, {
                 actorType: 'admin',
                 actorId: req.admin.id,
@@ -1675,8 +2411,8 @@ app.post('/api/admin/tables/:tableName', authenticateAdminToken, async (req, res
         return res.status(201).json({ row })
     } catch (error) {
         await client.query('ROLLBACK')
-        console.error('Admin table create error:', error)
-        return res.status(500).json({ error: 'Ошибка добавления записи' })
+        logError('Добавление записи', error.message || String(error))
+        return res.status(500).json({ error: getDatabaseErrorMessage(error, 'добавления') })
     } finally {
         client.release()
     }
@@ -1689,18 +2425,24 @@ app.put('/api/admin/tables/:tableName/:id', authenticateAdminToken, async (req, 
         return res.status(400).json({ error: 'Редактирование этой таблицы недоступно' })
     }
 
+    const validationError = validateAdminPayload(req.params.tableName, req.body, 'edit')
+
+    if (validationError) {
+        return res.status(400).json({ error: validationError })
+    }
+
     const columns = table.editable.filter((column) => Object.hasOwn(req.body, column))
 
     if (columns.length === 0) {
         return res.status(400).json({ error: 'Нет данных для обновления' })
     }
 
-    const values = columns.map((column) => normalizeAdminValue(req.body[column]))
+    const values = columns.map((column) => normalizeAdminValue(req.body[column], column))
     const assignments = columns.map((column, index) => `${column} = $${index + 1}`)
     const tableColumns = getAdminTableColumns(table)
 
     if (table.columns.includes('updated_at')) {
-        assignments.push('updated_at = NOW()')
+        assignments.push('updated_at = CURRENT_DATE')
     }
 
     const client = await pool.connect()
@@ -1726,7 +2468,31 @@ app.put('/api/admin/tables/:tableName/:id', authenticateAdminToken, async (req, 
         )
         let row = result.rows[0]
 
-        if (req.params.tableName === 'balances') {
+        if (req.params.tableName === 'registration_data') {
+            await client.query(
+                `
+                    INSERT INTO personalization_data (registration_id, full_name, residential_address, registration_address)
+                    VALUES ($1, $2, $3, $3)
+                    ON CONFLICT (registration_id) DO NOTHING
+                `,
+                [row.id, row.fio, row.street]
+            )
+
+            for (const waterType of WATER_TYPES) {
+                const tariff = await getActiveTariff(client, waterType)
+
+                await client.query(
+                    `
+                        INSERT INTO water_meter_readings (registration_id, water_type, current_reading, unit)
+                        VALUES ($1, $2, 0, $3)
+                        ON CONFLICT (registration_id, water_type) DO NOTHING
+                    `,
+                    [row.id, waterType, waterType === 'hot_water' ? 'м3' : tariff.unit]
+                )
+            }
+        }
+
+        if (req.params.tableName === 'water_balances') {
             await syncNegativeBalanceDebt(client, row, {
                 actorType: 'admin',
                 actorId: req.admin.id,
@@ -1761,8 +2527,8 @@ app.put('/api/admin/tables/:tableName/:id', authenticateAdminToken, async (req, 
         return res.json({ row })
     } catch (error) {
         await client.query('ROLLBACK')
-        console.error('Admin table update error:', error)
-        return res.status(500).json({ error: 'Ошибка обновления записи' })
+        logError('Обновление записи', error.message || String(error))
+        return res.status(500).json({ error: getDatabaseErrorMessage(error, 'обновления') })
     } finally {
         client.release()
     }
@@ -1789,7 +2555,7 @@ app.delete('/api/admin/tables/:tableName/:id', authenticateAdminToken, async (re
 
         await client.query(`DELETE FROM ${req.params.tableName} WHERE id = $1`, [req.params.id])
 
-        if (req.params.tableName === 'balances') {
+        if (req.params.tableName === 'water_balances') {
             await syncNegativeBalanceDebt(
                 client,
                 {
@@ -1826,7 +2592,7 @@ app.delete('/api/admin/tables/:tableName/:id', authenticateAdminToken, async (re
         return res.json({ message: 'Запись удалена' })
     } catch (error) {
         await client.query('ROLLBACK')
-        console.error('Admin table delete error:', error)
+        logError('Удаление записи', error.message || String(error))
         return res.status(500).json({ error: 'Ошибка удаления записи' })
     } finally {
         client.release()
@@ -1848,15 +2614,40 @@ app.get('/api/profile', authenticateToken, async (req, res) => {
                     p.email,
                     p.residential_address,
                     p.registration_address,
-                    COALESCE(b.amount, 0)::text AS balance,
-                    COALESCE(b.currency, $2) AS currency,
-                    COALESCE(SUM(CASE WHEN d.is_active THEN d.debt_amount ELSE 0 END), 0)::text AS active_debt
+                    COALESCE(hmr.current_reading, 0)::text AS hot_water,
+                    COALESCE(hmr.current_reading, 0)::text AS hot_water_previous_reading,
+                    COALESCE(hmr.unit, 'м3') AS hot_water_unit,
+                    $2 AS hot_water_currency,
+                    COALESCE(cmr.current_reading, 0)::text AS cold_water,
+                    COALESCE(cmr.current_reading, 0)::text AS cold_water_previous_reading,
+                    COALESCE(cmr.unit, 'м3') AS cold_water_unit,
+                    $2 AS cold_water_currency,
+                    COALESCE(hd.hot_debt, 0)::text AS hot_water_debt,
+                    COALESCE(cd.cold_debt, 0)::text AS cold_water_debt,
+                    COALESCE(d.active_debt, 0)::text AS amount_to_pay,
+                    COALESCE(d.active_debt, 0)::text AS active_debt
                 FROM registration_data r
                 LEFT JOIN personalization_data p ON p.registration_id = r.id
-                LEFT JOIN balances b ON b.registration_id = r.id
-                LEFT JOIN debtors d ON d.registration_id = r.id
+                LEFT JOIN water_meter_readings hmr ON hmr.registration_id = r.id AND hmr.water_type = 'hot_water'
+                LEFT JOIN water_meter_readings cmr ON cmr.registration_id = r.id AND cmr.water_type = 'cold_water'
+                LEFT JOIN LATERAL (
+                    SELECT COALESCE(SUM(debt_amount) FILTER (WHERE is_active), 0) AS hot_debt
+                    FROM debtors
+                    WHERE registration_id = r.id
+                      AND reason LIKE 'Начисление по показаниям счетчика: Горячая вода%'
+                ) hd ON TRUE
+                LEFT JOIN LATERAL (
+                    SELECT COALESCE(SUM(debt_amount) FILTER (WHERE is_active), 0) AS cold_debt
+                    FROM debtors
+                    WHERE registration_id = r.id
+                      AND reason LIKE 'Начисление по показаниям счетчика: Холодная вода%'
+                ) cd ON TRUE
+                LEFT JOIN LATERAL (
+                    SELECT COALESCE(SUM(debt_amount) FILTER (WHERE is_active), 0) AS active_debt
+                    FROM debtors
+                    WHERE registration_id = r.id
+                ) d ON TRUE
                 WHERE r.id = $1
-                GROUP BY r.id, p.id, b.id, b.currency
             `,
             [req.user.id, TELEGRAM_PAYMENT_CURRENCY]
         )
@@ -1878,12 +2669,20 @@ app.get('/api/profile', authenticateToken, async (req, res) => {
             email: row.email || '',
             residentialAddress: row.residential_address || '',
             registrationAddress: row.registration_address || row.street || '',
-            balance: Number(row.balance),
-            currency: row.currency,
+            hotWater: Number(row.hot_water),
+            coldWater: Number(row.cold_water),
+            hotWaterPreviousReading: Number(row.hot_water_previous_reading),
+            coldWaterPreviousReading: Number(row.cold_water_previous_reading),
+            hotWaterUnit: row.hot_water_unit || 'м3',
+            coldWaterUnit: row.cold_water_unit || 'м3',
+            hotWaterDebt: Number(row.hot_water_debt),
+            coldWaterDebt: Number(row.cold_water_debt),
+            amountToPay: Number(row.amount_to_pay),
+            currency: row.hot_water_currency || TELEGRAM_PAYMENT_CURRENCY,
             activeDebt: Number(row.active_debt),
         })
     } catch (error) {
-        console.error('Profile error:', error)
+        logError('Профиль (чтение)', error.message || String(error))
         return res.status(500).json({ error: 'Ошибка сервера' })
     }
 })
@@ -1897,6 +2696,41 @@ app.put('/api/profile', authenticateToken, async (req, res) => {
         residentialAddress,
         registrationAddress,
     } = req.body
+
+    const requiredError = validateRequiredFields(
+        {
+            fullName,
+            birthDate,
+            phone,
+            email,
+            residentialAddress,
+            registrationAddress,
+        },
+        [
+            { key: 'fullName', label: 'ФИО' },
+            { key: 'birthDate', label: 'Дата рождения' },
+            { key: 'phone', label: 'Телефон' },
+            { key: 'email', label: 'Email' },
+            { key: 'residentialAddress', label: 'Адрес проживания' },
+            { key: 'registrationAddress', label: 'Адрес регистрации' },
+        ]
+    )
+
+    if (requiredError) {
+        return res.status(400).json({ error: requiredError })
+    }
+
+    const contactError = validateContactFields({
+        birthDate,
+        phone,
+        email,
+    })
+
+    if (contactError) {
+        return res.status(400).json({ error: contactError })
+    }
+
+    const normalizedBirthDate = birthDate ? parseRuDateToIso(birthDate) : ''
 
     const client = await pool.connect()
 
@@ -1935,7 +2769,7 @@ app.put('/api/profile', authenticateToken, async (req, res) => {
                     email = $4,
                     residential_address = $5,
                     registration_address = $6,
-                    updated_at = NOW()
+                    updated_at = CURRENT_DATE
                 WHERE registration_id = $7
                 RETURNING
                     id,
@@ -1949,7 +2783,7 @@ app.put('/api/profile', authenticateToken, async (req, res) => {
             `,
             [
                 fullName || null,
-                birthDate || '',
+                normalizedBirthDate || '',
                 phone || null,
                 email || null,
                 residentialAddress || null,
@@ -1988,20 +2822,273 @@ app.put('/api/profile', authenticateToken, async (req, res) => {
         return res.json({ message: 'Профиль обновлен' })
     } catch (error) {
         await client.query('ROLLBACK')
-        console.error('Profile update error:', error)
+        logError('Профиль (обновление)', error.message || String(error))
         return res.status(500).json({ error: 'Ошибка сервера при обновлении профиля' })
     } finally {
         client.release()
     }
 })
 
+app.get('/api/tariffs', authenticateToken, async (req, res) => {
+    try {
+        const result = await pool.query(
+            `
+                SELECT id, water_type, CASE water_type WHEN 'hot_water' THEN 'Горячая вода' WHEN 'cold_water' THEN 'Холодная вода' ELSE water_type END AS water_type_label, rate_per_unit::text AS rate_per_unit, unit, currency, effective_from, is_active
+                FROM tariffs
+                WHERE is_active = TRUE
+                ORDER BY water_type, effective_from DESC
+            `
+        )
+        return res.json({ tariffs: result.rows })
+    } catch (error) {
+        logError('Тарифы (чтение)', error.message || String(error))
+        return res.status(500).json({ error: 'Ошибка чтения тарифов' })
+    }
+})
+
+app.get('/api/payments/history', authenticateToken, async (req, res) => {
+    try {
+        const telegramResult = await pool.query(
+            `
+                SELECT
+                    id,
+                    'telegram' AS payment_type,
+                    amount::text AS amount,
+                    currency,
+                    status,
+                    description,
+                    created_at,
+                    paid_at
+                FROM telegram_payment_orders
+                WHERE registration_id = $1
+                ORDER BY created_at DESC, id DESC
+                LIMIT 50
+            `,
+            [req.user.id]
+        )
+
+        const fakeResult = await pool.query(
+            `
+                SELECT
+                    id,
+                    'fake' AS payment_type,
+                    amount::text AS amount,
+                    currency,
+                    status,
+                    description,
+                    water_type,
+                    previous_reading::text AS previous_reading,
+                    current_reading::text AS current_reading,
+                    consumption::text AS consumption,
+                    tariff_rate::text AS tariff_rate,
+                    CASE water_type WHEN 'hot_water' THEN 'м3' ELSE unit END AS unit,
+                    created_at,
+                    NULL::timestamp AS paid_at
+                FROM fake_payments
+                WHERE registration_id = $1
+                ORDER BY created_at DESC, id DESC
+                LIMIT 50
+            `,
+            [req.user.id]
+        )
+
+        const history = [...telegramResult.rows, ...fakeResult.rows]
+            .sort((a, b) => {
+                const dateA = a.created_at ? new Date(a.created_at).getTime() : 0
+                const dateB = b.created_at ? new Date(b.created_at).getTime() : 0
+                if (dateA !== dateB) return dateB - dateA
+                return (Number(b.id) || 0) - (Number(a.id) || 0)
+            })
+            .slice(0, 50)
+
+        return res.json({ history })
+    } catch (error) {
+        logError('История платежей', error.message || String(error))
+        return res.status(500).json({ error: 'Ошибка чтения истории платежей' })
+    }
+})
+
+app.post('/api/payments/fake', authenticateToken, async (req, res) => {
+    const { hotWaterReading, coldWaterReading, description } = req.body
+
+    const submittedReadings = [
+        { waterType: 'hot_water', reading: normalizeMeterReading(hotWaterReading) },
+        { waterType: 'cold_water', reading: normalizeMeterReading(coldWaterReading) },
+    ].filter((item) => item.reading !== null)
+
+    if (submittedReadings.length === 0) {
+        return res.status(400).json({ error: 'Укажите новые показания горячей или холодной воды' })
+    }
+
+    for (const item of submittedReadings) {
+        if (item.reading < 0) {
+            return res.status(400).json({ error: 'Показания счетчика не могут быть отрицательными' })
+        }
+    }
+
+    try {
+        const client = await pool.connect()
+
+        try {
+            await client.query('BEGIN')
+
+            const createdPayments = []
+            let totalAmount = 0
+
+            for (const item of submittedReadings) {
+                const waterLabel = WATER_TYPE_LABELS[item.waterType] || item.waterType
+                const previousResult = await client.query(
+                    `
+                        SELECT current_reading::text AS current_reading, unit
+                        FROM water_meter_readings
+                        WHERE registration_id = $1 AND water_type = $2
+                    `,
+                    [req.user.id, item.waterType]
+                )
+
+                const tariff = await getActiveTariff(client, item.waterType)
+                const coldTariff = item.waterType === 'hot_water'
+                    ? await getActiveTariff(client, 'cold_water')
+                    : null
+                const previousReading = normalizeMeterReading(previousResult.rows[0]?.current_reading || 0) || 0
+                const currentReading = item.reading
+
+                if (currentReading < previousReading) {
+                    await client.query('ROLLBACK')
+                    return res.status(400).json({
+                        error: `${waterLabel}: новые показания не могут быть меньше старых (${previousReading})`,
+                    })
+                }
+
+                const consumption = normalizeMeterReading(currentReading - previousReading) || 0
+                const coldWaterPart = item.waterType === 'hot_water'
+                    ? normalizePaymentAmount(consumption * (coldTariff?.rate || 0))
+                    : 0
+                const heatingPart = item.waterType === 'hot_water'
+                    ? normalizePaymentAmount(consumption * tariff.rate)
+                    : 0
+                const effectiveTariffRate = item.waterType === 'hot_water'
+                    ? normalizePaymentAmount((coldTariff?.rate || 0) + tariff.rate)
+                    : tariff.rate
+                const paymentAmount = item.waterType === 'hot_water'
+                    ? normalizePaymentAmount(coldWaterPart + heatingPart)
+                    : normalizePaymentAmount(consumption * effectiveTariffRate) || 0
+                totalAmount = normalizePaymentAmount(totalAmount + paymentAmount)
+
+                const result = await client.query(
+                    `
+                        INSERT INTO fake_payments (
+                            registration_id,
+                            amount,
+                            currency,
+                            water_type,
+                            description,
+                            status,
+                            previous_reading,
+                            current_reading,
+                            consumption,
+                            tariff_rate,
+                            unit
+                        )
+                        VALUES ($1, $2, $3, $4, $5, 'completed', $6, $7, $8, $9, $10)
+                        RETURNING *
+                    `,
+                    [
+                        req.user.id,
+                        paymentAmount,
+                        tariff.currency,
+                        item.waterType,
+                        description || `Расчет по показаниям счетчика: ${waterLabel}`,
+                        previousReading,
+                        currentReading,
+                        consumption,
+                        effectiveTariffRate,
+                        item.waterType === 'hot_water' ? 'м3' : tariff.unit,
+                    ]
+                )
+
+                await client.query(
+                    `
+                        INSERT INTO water_meter_readings (registration_id, water_type, current_reading, unit)
+                        VALUES ($1, $2, $3, $4)
+                        ON CONFLICT (registration_id, water_type) DO UPDATE
+                        SET current_reading = EXCLUDED.current_reading,
+                            unit = EXCLUDED.unit,
+                            updated_at = CURRENT_DATE
+                    `,
+                    [req.user.id, item.waterType, currentReading, item.waterType === 'hot_water' ? 'м3' : tariff.unit]
+                )
+
+                let debtId = null
+                if (paymentAmount > 0) {
+                    const debtReason = `${METER_READING_DEBT_REASON_PREFIX}: ${waterLabel}`
+                    const debtResult = await client.query(
+                        `
+                            INSERT INTO debtors (registration_id, debt_amount, reason, is_active)
+                            VALUES ($1, $2, $3, TRUE)
+                            RETURNING id
+                        `,
+                        [req.user.id, paymentAmount, debtReason]
+                    )
+                    debtId = debtResult.rows[0].id
+                }
+
+                await createAuditLog(
+                    {
+                        actorType: 'user',
+                        actorId: req.user.id,
+                        actorLogin: req.user.login,
+                        action: 'meter_reading_payment_created',
+                        entityTable: 'fake_payments',
+                        entityId: result.rows[0].id,
+                        changes: {
+                            after: {
+                                water_type: item.waterType,
+                                previous_reading: previousReading,
+                                current_reading: currentReading,
+                                consumption,
+                                tariff_rate: effectiveTariffRate,
+                                unit: item.waterType === 'hot_water' ? 'м3' : tariff.unit,
+                                amount: paymentAmount,
+                                currency: tariff.currency,
+                                status: 'completed',
+                                debt_id: debtId,
+                            },
+                        },
+                        ipAddress: req.ip,
+                    },
+                    client
+                )
+
+                createdPayments.push(result.rows[0])
+            }
+
+            await client.query('COMMIT')
+
+            return res.status(201).json({
+                message: `Показания счетчиков сохранены. Предыдущие показания обновлены, начислено к оплате: ${totalAmount} ${TELEGRAM_PAYMENT_CURRENCY}`,
+                totalAmount,
+                payments: createdPayments,
+            })
+        } catch (error) {
+            await client.query('ROLLBACK')
+            throw error
+        } finally {
+            client.release()
+        }
+    } catch (error) {
+        logError('Расчет по показаниям счетчиков', error.message || String(error))
+        return res.status(500).json({ error: 'Не удалось сохранить показания счетчиков' })
+    }
+})
+
 initializeDatabase()
     .then(() => {
         app.listen(PORT, () => {
-            console.log(`Server running on port ${PORT}`)
+            logInfo('Сервер', `Сервер запущен на порту ${PORT}`)
         })
     })
     .catch((error) => {
-        console.error('Database initialization failed:', error)
+        logError('Инициализация БД', error.message || String(error))
         process.exit(1)
     })

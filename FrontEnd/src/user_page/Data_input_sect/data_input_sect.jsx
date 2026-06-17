@@ -28,8 +28,22 @@ export default function Data_input_sect({
                                 type={field.type}
                                 placeholder={field.placeholder}
                                 autoComplete={field.autoComplete}
+                                inputMode={
+                                    field.key === 'phone' || field.key === 'birthDate'
+                                        ? 'numeric'
+                                        : undefined
+                                }
+                                pattern={
+                                    field.key === 'phone'
+                                        ? '^\\+375\\(\\d{2}\\)\\d{3}-\\d{2}-\\d{2}$'
+                                        : field.key === 'birthDate'
+                                            ? '^\\d{2}\\.\\d{2}\\.\\d{4}$'
+                                            : undefined
+                                }
+                                maxLength={field.key === 'birthDate' ? 10 : undefined}
                                 value={formData[field.key] ?? ''}
                                 onChange={(event) => onChange(field.key, event.target.value)}
+                                required
                             />
                         </label>
                     ))}

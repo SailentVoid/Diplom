@@ -9,7 +9,8 @@ const columnLabels = {
     fio: 'ФИО',
     login: 'Логин',
     street: 'Адрес',
-    registration_id: 'ID пользователя',
+    registration_id: 'ID пользователя (служебно)',
+    user_fio: 'ФИО пользователя',
     full_name: 'ФИО',
     birth_date: 'Дата рождения',
     phone: 'Телефон',
@@ -18,20 +19,34 @@ const columnLabels = {
     registration_address: 'Адрес регистрации',
     role: 'Роль',
     is_active: 'Активен',
-    balance: 'Баланс',
+    hot_water: 'Горячая вода / показания',
+    cold_water: 'Холодная вода / показания',
     active_debt: 'Активный долг',
+    hot_water_debt: 'Долг горячей воды',
+    cold_water_debt: 'Долг холодной воды',
+    amount_to_pay: 'К оплате',
     debtor_status: 'Статус долга',
-    amount: 'Баланс',
+    water_type: 'Тип воды',
+    water_type_label: 'Тип воды',
+    amount: 'Сумма к оплате',
     currency: 'Валюта',
     debt_amount: 'Сумма долга',
     reason: 'Причина',
     status: 'Статус',
+    previous_reading: 'Старые показания',
+    current_reading: 'Текущие/новые показания',
+    consumption: 'Расход',
+    tariff_rate: 'Тариф',
+    rate_per_unit: 'Тариф за ед.',
+    unit: 'Ед. измерения',
+    effective_from: 'Действует с',
     telegram_payload: 'Payload Telegram',
     telegram_chat_id: 'Chat ID',
     telegram_username: 'Telegram',
     description: 'Описание',
     telegram_payment_charge_id: 'ID платежа Telegram',
     provider_payment_charge_id: 'ID платежного провайдера',
+    password: 'Пароль',
     invoice_sent_at: 'Инвойс отправлен',
     paid_at: 'Оплачено',
     closed_at: 'Дата закрытия',
@@ -49,12 +64,125 @@ const actionLabels = {
     password_reset_completed: 'Пользователь сменил пароль',
     telegram_payment_created: 'Пользователь создал платеж Telegram',
     telegram_payment_paid: 'Платеж Telegram оплачен',
+    fake_payment_created: 'Пользователь создал тестовый платеж',
+    fake_payment_paid: 'Фиктивная оплата подтверждена',
+    meter_reading_payment_created: 'Расчет оплаты по показаниям счетчика',
     balance_auto_debtor_created: 'Пользователь помечен должником',
     balance_auto_debtor_updated: 'Сумма автоматического долга обновлена',
     balance_auto_debtor_closed: 'Автоматический долг закрыт',
 }
 
-const formatCellValue = (value) => {
+const dateOnlyColumns = new Set(['birth_date', 'effective_from', 'closed_at'])
+const dateTimeColumns = new Set(['created_at', 'updated_at', 'invoice_sent_at', 'paid_at'])
+
+const isDateLikeString = (value) =>
+    typeof value === 'string' &&
+    /^\d{4}-\d{2}-\d{2}(?:[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)?$/.test(value)
+
+const formatDateValue = (value, withTime = false) => {
+    if (!value) {
+        return '—'
+    }
+
+    const source = value instanceof Date ? value.toISOString() : String(value)
+    const match = source.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2}):(\d{2}))?/)
+
+    if (!match) {
+        return String(value)
+    }
+
+    const [, year, month, day, hour, minute, second] = match
+    const date = `${day}.${month}.${year}`
+
+    if (!withTime || !hour) {
+        return date
+    }
+
+    return `${date}, ${hour}:${minute}:${second}`
+}
+
+
+const toInputDate = (value) => {
+    if (!value) return ''
+    const source = String(value)
+    const iso = source.match(/^(\d{4})-(\d{2})-(\d{2})/)
+    if (iso) return `${iso[3]}.${iso[2]}.${iso[1]}`
+    return source
+}
+
+const waterTypeLabels = {
+    hot_water: 'Горячая вода',
+    cold_water: 'Холодная вода',
+}
+
+const onlyDigits = (value) => String(value || '').replace(/\D/g, '')
+
+const formatPhoneInput = (value) => {
+    let digits = onlyDigits(value)
+
+    if (digits.startsWith('375')) {
+        digits = digits.slice(3)
+    }
+
+    digits = digits.slice(0, 9)
+
+    const code = digits.slice(0, 2)
+    const first = digits.slice(2, 5)
+    const second = digits.slice(5, 7)
+    const third = digits.slice(7, 9)
+
+    let formatted = '+375'
+    if (code) formatted += `(${code}`
+    if (code.length === 2) formatted += ')'
+    if (first) formatted += first
+    if (second) formatted += `-${second}`
+    if (third) formatted += `-${third}`
+
+    return formatted
+}
+
+const formatRuDateInput = (value) => {
+    const digits = onlyDigits(value).slice(0, 8)
+    const day = digits.slice(0, 2)
+    const month = digits.slice(2, 4)
+    const year = digits.slice(4, 8)
+
+    return [day, month, year].filter(Boolean).join('.')
+}
+
+const getInputProps = (column) => {
+    if (column === 'phone') {
+        return { type: 'tel', placeholder: '+375(11)222-33-44', pattern: '^\\+375\\(\\d{2}\\)\\d{3}-\\d{2}-\\d{2}$', inputMode: 'numeric' }
+    }
+
+    if (column === 'email') {
+        return { type: 'email', placeholder: 'example1@Exammp.com' }
+    }
+
+    if (column === 'birth_date') {
+        return { type: 'text', placeholder: '11.06.2007', pattern: '^\\d{2}\\.\\d{2}\\.\\d{4}$', inputMode: 'numeric', maxLength: 10 }
+    }
+
+    if (dateOnlyColumns.has(column)) {
+        return { type: 'text', placeholder: '11.06.2007' }
+    }
+
+    if (column === 'password') {
+        return { type: 'password', placeholder: 'Пароль для входа пользователя' }
+    }
+
+    return { type: 'text' }
+}
+
+const normalizeFormValue = (column, value) => {
+    if (column === 'birth_date' || dateOnlyColumns.has(column)) {
+        return toInputDate(value)
+    }
+
+    return value ?? ''
+}
+
+const formatCellValue = (value, column = '') => {
     if (value === null || value === undefined || value === '') {
         return '—'
     }
@@ -63,15 +191,34 @@ const formatCellValue = (value) => {
         return value ? 'Да' : 'Нет'
     }
 
+    if (column === 'water_type') {
+        return waterTypeLabels[value] || String(value)
+    }
+
+    if (dateOnlyColumns.has(column)) {
+        return formatDateValue(value, false)
+    }
+
+    if (dateTimeColumns.has(column)) {
+        return formatDateValue(value, true)
+    }
+
+    if (isDateLikeString(value)) {
+        return formatDateValue(value, false)
+    }
+
     return String(value)
 }
 
 const isDebtorRow = (tableName, row) =>
-    ['registration_data', 'balances'].includes(tableName) &&
-    (row.debtor_status === 'Должник' || Number(row.amount) < 0 || Number(row.balance) < 0)
+    ['registration_data', 'water_balances'].includes(tableName) &&
+    (row.debtor_status === 'Должник' || Number(row.amount) < 0 || Number(row.hot_water) < 0 || Number(row.cold_water) < 0)
 
 const isNegativeMoneyColumn = (column, value) =>
-    ['amount', 'balance'].includes(column) && Number(value) < 0
+    ['amount', 'hot_water', 'cold_water'].includes(column) && Number(value) < 0
+
+const isDebtMoneyColumn = (column, value) =>
+    ['hot_water_debt', 'cold_water_debt', 'amount_to_pay'].includes(column) && Number(value) > 0
 
 const renderTableCell = (tableName, row, column) => {
     const value = row[column]
@@ -84,22 +231,23 @@ const renderTableCell = (tableName, row, column) => {
         )
     }
 
-    if (isNegativeMoneyColumn(column, value)) {
-        return <strong className={classes.NegativeAmount}>{formatCellValue(value)}</strong>
+    if (isNegativeMoneyColumn(column, value) || isDebtMoneyColumn(column, value)) {
+        return <strong className={classes.NegativeAmount}>{formatCellValue(value, column)}</strong>
     }
 
-    return formatCellValue(value)
+    return formatCellValue(value, column)
 }
 
-const formatDateTime = (value) => {
-    if (!value) {
-        return '—'
+const formatDateTime = (value) => formatDateValue(value, true)
+
+const humanizeLogObject = (value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return formatLogValue(value)
     }
 
-    return new Intl.DateTimeFormat('ru-RU', {
-        dateStyle: 'short',
-        timeStyle: 'medium',
-    }).format(new Date(value))
+    return Object.entries(value)
+        .map(([key, nextValue]) => `${columnLabels[key] || key}: ${formatLogValue(nextValue)}`)
+        .join('; ')
 }
 
 const formatLogValue = (value) => {
@@ -107,11 +255,50 @@ const formatLogValue = (value) => {
         return 'пусто'
     }
 
+    if (typeof value === 'boolean') {
+        return value ? 'Да' : 'Нет'
+    }
+
+    if (value === 'hot_water' || value === 'cold_water') {
+        return waterTypeLabels[value] || String(value)
+    }
+
+    if (isDateLikeString(value)) {
+        return formatDateValue(value, value.includes('T') || value.includes(' '))
+    }
+
+    if (Array.isArray(value)) {
+        return value.map(humanizeLogObject).join('; ')
+    }
+
     if (typeof value === 'object') {
-        return JSON.stringify(value)
+        return humanizeLogObject(value)
     }
 
     return String(value)
+}
+
+const renderSnapshotChanges = (changes) => {
+    const rows = []
+
+    if (changes.before) {
+        rows.push(['До изменения', changes.before])
+    }
+
+    if (changes.after) {
+        rows.push(['После изменения', changes.after])
+    }
+
+    return (
+        <div className={classes.ChangeList}>
+            {rows.map(([label, value]) => (
+                <div key={label} className={classes.ChangeItem}>
+                    <span>{label}</span>
+                    <p>{formatLogValue(value)}</p>
+                </div>
+            ))}
+        </div>
+    )
 }
 
 const renderLogChanges = (changes) => {
@@ -120,7 +307,7 @@ const renderLogChanges = (changes) => {
     }
 
     if (changes.before || changes.after) {
-        return <pre className={classes.LogJson}>{JSON.stringify(changes, null, 2)}</pre>
+        return renderSnapshotChanges(changes)
     }
 
     return (
@@ -151,6 +338,7 @@ export default function AdminPage() {
     const [formData, setFormData] = useState({})
     const [loading, setLoading] = useState(false)
     const [logs, setLogs] = useState([])
+    const [userOptions, setUserOptions] = useState([])
 
     const authHeaders = useMemo(
         () => ({
@@ -228,11 +416,29 @@ export default function AdminPage() {
         }
     }, [authHeaders, loadRows])
 
+    const loadUserOptions = useCallback(async () => {
+        if (!adminToken) {
+            setUserOptions([])
+            return
+        }
+
+        try {
+            const response = await axios.get(`${apiUrl}/tables/registration_data`, {
+                headers: authHeaders,
+            })
+
+            setUserOptions(response.data.rows || [])
+        } catch {
+            setUserOptions([])
+        }
+    }, [adminToken, authHeaders])
+
     useEffect(() => {
         if (adminToken) {
             loadTables()
+            loadUserOptions()
         }
-    }, [adminToken, loadTables])
+    }, [adminToken, loadTables, loadUserOptions])
 
     useEffect(() => {
         if (!adminToken) {
@@ -298,7 +504,7 @@ export default function AdminPage() {
 
     const startEdit = (row) => {
         const nextData = activeMeta.editable.reduce((acc, column) => {
-            acc[column] = row[column] ?? ''
+            acc[column] = normalizeFormValue(column, row[column])
             return acc
         }, {})
 
@@ -308,9 +514,19 @@ export default function AdminPage() {
     }
 
     const handleFieldChange = (column, value) => {
+        let nextValue = value
+
+        if (column === 'phone') {
+            nextValue = formatPhoneInput(value)
+        }
+
+        if (column === 'birth_date') {
+            nextValue = formatRuDateInput(value)
+        }
+
         setFormData((prev) => ({
             ...prev,
-            [column]: value,
+            [column]: nextValue,
         }))
     }
 
@@ -534,13 +750,53 @@ export default function AdminPage() {
                                             {Object.keys(formData).map((column) => (
                                                 <label key={column} className={classes.Field}>
                                                     <span>{columnLabels[column] || column}</span>
-                                                    <input
-                                                        type="text"
-                                                        value={String(formData[column] ?? '')}
-                                                        onChange={(event) =>
-                                                            handleFieldChange(column, event.target.value)
-                                                        }
-                                                    />
+                                                    {column === 'water_type' ? (
+                                                        <select
+                                                            value={String(formData[column] ?? '')}
+                                                            onChange={(event) =>
+                                                                handleFieldChange(column, event.target.value)
+                                                            }
+                                                            required
+                                                        >
+                                                            <option value="">Выберите тип воды</option>
+                                                            <option value="hot_water">Горячая вода</option>
+                                                            <option value="cold_water">Холодная вода</option>
+                                                        </select>
+                                                    ) : column === 'registration_id' ? (
+                                                        <select
+                                                            value={String(formData[column] ?? '')}
+                                                            onChange={(event) =>
+                                                                handleFieldChange(column, event.target.value)
+                                                            }
+                                                            required
+                                                        >
+                                                            <option value="">Выберите пользователя</option>
+                                                            {userOptions.map((user) => (
+                                                                <option key={user.id} value={user.id}>
+                                                                    {user.fio} ({user.login})
+                                                                </option>
+                                                            ))}
+                                                        </select>
+                                                    ) : column === 'is_active' ? (
+                                                        <select
+                                                            value={String(formData[column] ?? '')}
+                                                            onChange={(event) =>
+                                                                handleFieldChange(column, event.target.value)
+                                                            }
+                                                        >
+                                                            <option value="true">Да</option>
+                                                            <option value="false">Нет</option>
+                                                        </select>
+                                                    ) : (
+                                                        <input
+                                                            {...getInputProps(column)}
+                                                            value={String(formData[column] ?? '')}
+                                                            onChange={(event) =>
+                                                                handleFieldChange(column, event.target.value)
+                                                            }
+                                                            required
+                                                        />
+                                                    )}
                                                 </label>
                                             ))}
                                         </div>

@@ -4,7 +4,7 @@
     login TEXT NOT NULL UNIQUE,
     street TEXT NOT NULL,
     password_hash TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at DATE NOT NULL DEFAULT CURRENT_DATE
 );
 
 CREATE TABLE IF NOT EXISTS personalization_data (
@@ -16,8 +16,8 @@ CREATE TABLE IF NOT EXISTS personalization_data (
     email TEXT,
     residential_address TEXT,
     registration_address TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at DATE NOT NULL DEFAULT CURRENT_DATE,
+    updated_at DATE NOT NULL DEFAULT CURRENT_DATE
 );
 
 CREATE TABLE IF NOT EXISTS admins (
@@ -27,18 +27,29 @@ CREATE TABLE IF NOT EXISTS admins (
     password_hash TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'admin',
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at DATE NOT NULL DEFAULT CURRENT_DATE
 );
 
-CREATE TABLE IF NOT EXISTS balances (
+CREATE TABLE IF NOT EXISTS water_balances (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    registration_id BIGINT NOT NULL UNIQUE REFERENCES registration_data(id) ON DELETE CASCADE,
+    registration_id BIGINT NOT NULL REFERENCES registration_data(id) ON DELETE CASCADE,
+    water_type TEXT NOT NULL CHECK (water_type IN ('hot_water', 'cold_water')),
     amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
     currency CHAR(3) NOT NULL DEFAULT 'BYN',
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at DATE NOT NULL DEFAULT CURRENT_DATE,
+    UNIQUE (registration_id, water_type)
 );
 
-ALTER TABLE balances ALTER COLUMN currency SET DEFAULT 'BYN';
+
+CREATE TABLE IF NOT EXISTS water_meter_readings (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    registration_id BIGINT NOT NULL REFERENCES registration_data(id) ON DELETE CASCADE,
+    water_type TEXT NOT NULL CHECK (water_type IN ('hot_water', 'cold_water')),
+    current_reading NUMERIC(12, 3) NOT NULL DEFAULT 0,
+    unit TEXT NOT NULL DEFAULT 'м3',
+    updated_at DATE NOT NULL DEFAULT CURRENT_DATE,
+    UNIQUE (registration_id, water_type)
+);
 
 CREATE TABLE IF NOT EXISTS debtors (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -46,8 +57,8 @@ CREATE TABLE IF NOT EXISTS debtors (
     debt_amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
     reason TEXT,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    closed_at TIMESTAMPTZ
+    created_at DATE NOT NULL DEFAULT CURRENT_DATE,
+    closed_at DATE
 );
 
 CREATE TABLE IF NOT EXISTS audit_logs (
@@ -60,7 +71,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     entity_id BIGINT,
     changes JSONB NOT NULL DEFAULT '{}'::jsonb,
     ip_address TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at DATE NOT NULL DEFAULT CURRENT_DATE
 );
 
 CREATE TABLE IF NOT EXISTS password_reset_codes (
@@ -70,8 +81,8 @@ CREATE TABLE IF NOT EXISTS password_reset_codes (
     code_hash TEXT NOT NULL,
     attempts INTEGER NOT NULL DEFAULT 0,
     expires_at TIMESTAMPTZ NOT NULL,
-    used_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    used_at DATE,
+    created_at DATE NOT NULL DEFAULT CURRENT_DATE
 );
 
 CREATE TABLE IF NOT EXISTS telegram_payment_orders (
@@ -90,16 +101,42 @@ CREATE TABLE IF NOT EXISTS telegram_payment_orders (
     telegram_payment_charge_id TEXT,
     provider_payment_charge_id TEXT,
     raw_update JSONB,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    invoice_sent_at TIMESTAMPTZ,
-    paid_at TIMESTAMPTZ,
-    cancelled_at TIMESTAMPTZ
+    created_at DATE NOT NULL DEFAULT CURRENT_DATE,
+    invoice_sent_at DATE,
+    paid_at DATE,
+    cancelled_at DATE
 );
 
-ALTER TABLE telegram_payment_orders ADD COLUMN IF NOT EXISTS payment_method TEXT NOT NULL DEFAULT 'telegram_provider';
-ALTER TABLE telegram_payment_orders ADD COLUMN IF NOT EXISTS invoice_currency CHAR(3) NOT NULL DEFAULT 'BYN';
-ALTER TABLE telegram_payment_orders ADD COLUMN IF NOT EXISTS invoice_amount INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE IF NOT EXISTS tariffs (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    water_type TEXT NOT NULL CHECK (water_type IN ('hot_water', 'cold_water')),
+    rate_per_unit NUMERIC(10, 4) NOT NULL CHECK (rate_per_unit >= 0),
+    unit TEXT NOT NULL DEFAULT 'm3',
+    currency CHAR(3) NOT NULL DEFAULT 'BYN',
+    effective_from DATE NOT NULL DEFAULT CURRENT_DATE,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at DATE NOT NULL DEFAULT CURRENT_DATE
+);
 
+CREATE TABLE IF NOT EXISTS fake_payments (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    registration_id BIGINT NOT NULL REFERENCES registration_data(id) ON DELETE CASCADE,
+    amount NUMERIC(12, 2) NOT NULL,
+    currency CHAR(3) NOT NULL DEFAULT 'BYN',
+    water_type TEXT NOT NULL CHECK (water_type IN ('hot_water', 'cold_water')),
+    description TEXT,
+    status TEXT NOT NULL DEFAULT 'completed' CHECK (status IN ('pending', 'completed', 'failed')),
+    previous_reading NUMERIC(12, 3),
+    current_reading NUMERIC(12, 3),
+    consumption NUMERIC(12, 3),
+    tariff_rate NUMERIC(10, 4),
+    unit TEXT,
+    created_at DATE NOT NULL DEFAULT CURRENT_DATE
+);
+
+CREATE INDEX IF NOT EXISTS idx_water_balances_registration_id ON water_balances(registration_id);
+CREATE INDEX IF NOT EXISTS idx_water_balances_water_type ON water_balances(water_type);
+CREATE INDEX IF NOT EXISTS idx_water_meter_readings_registration_id ON water_meter_readings(registration_id);
 CREATE INDEX IF NOT EXISTS idx_debtors_registration_id ON debtors(registration_id);
 CREATE INDEX IF NOT EXISTS idx_debtors_is_active ON debtors(is_active);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC);
@@ -109,3 +146,5 @@ CREATE INDEX IF NOT EXISTS idx_password_reset_codes_registration_id ON password_
 CREATE INDEX IF NOT EXISTS idx_telegram_payment_orders_registration_id ON telegram_payment_orders(registration_id);
 CREATE INDEX IF NOT EXISTS idx_telegram_payment_orders_payload ON telegram_payment_orders(telegram_payload);
 CREATE INDEX IF NOT EXISTS idx_telegram_payment_orders_status ON telegram_payment_orders(status);
+CREATE INDEX IF NOT EXISTS idx_tariffs_water_type ON tariffs(water_type);
+CREATE INDEX IF NOT EXISTS idx_fake_payments_registration_id ON fake_payments(registration_id);

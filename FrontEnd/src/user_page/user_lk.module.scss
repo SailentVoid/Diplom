@@ -93,6 +93,20 @@
     margin-bottom: 20px;
 }
 
+
+.DebtItem {
+    border-color: #fecaca;
+    background: #fff7ed;
+
+    span {
+        color: #b45309;
+    }
+
+    strong {
+        color: #b91c1c;
+    }
+}
+
 .FinanceItem {
     padding: 18px;
     border: 1px solid #e2e8f0;
@@ -150,6 +164,18 @@
         cursor: not-allowed;
         opacity: 0.7;
     }
+}
+
+.ReadOnlyValue {
+    min-height: 46px;
+    display: flex;
+    align-items: center;
+    padding: 0 14px;
+    border: 1px solid #dbeafe;
+    border-radius: 8px;
+    background: #f8fafc;
+    color: #0f172a;
+    font-weight: 800;
 }
 
 .PaymentHint,
